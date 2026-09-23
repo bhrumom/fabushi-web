@@ -51,3 +51,41 @@ jobs:
       - run: pnpm --filter @fabushi/web run build
         env:
           NEXT_PUBLIC_MAHAYANA_GATEWAY_URL: ws://127.0.0.1:8787/v1/coordinator
+
+  browser-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: frontend/apps/web/pnpm-lock.yaml
+      - id: chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --no-frozen-lockfile
+      - name: Build production Web app for durable-browser acceptance
+        working-directory: frontend
+        run: pnpm --filter @fabushi/web run build
+        env:
+          NEXT_PUBLIC_MAHAYANA_GATEWAY_URL: ws://127.0.0.1:18993/v1/coordinator
+      - name: Run real Chromium durable reload acceptance
+        run: node --test tests/browser/*.test.mjs
+        env:
+          CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
+      - name: Upload Chromium acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: grok-web-chromium-evidence-${{ github.sha }}
+          path: artifacts/grok-web-chromium
+          if-no-files-found: warn
+
