@@ -47,9 +47,7 @@ import type {
   WorkflowSummary,
   WorkflowTrigger,
 } from "../../lib/mahayana-host/contracts";
-import { ElectronMahayanaHostTransport, isElectronMahayanaHostAvailable } from "../../lib/mahayana-host/electron-transport";
 import { MockMahayanaHostTransport } from "../../lib/mahayana-host/mock-transport";
-import { WasmMahayanaHostTransport } from "../../lib/mahayana-host/wasm-transport";
 import { WebSocketMahayanaHostTransport, isWebSocketMahayanaHostConfigured } from "../../lib/mahayana-host/websocket-transport";
 import type { MahayanaHostTransport } from "../../lib/mahayana-host/transport";
 import { MahayanaCoordinator } from "../../lib/mahayana-host/coordinator";
@@ -429,8 +427,7 @@ export default function HostClient({ onAuthStateChange }: HostClientProps) {
     // the durable Web Main -> Coordinator -> Host -> Runner transport first.
     if (hostTestMode) return new MockMahayanaHostTransport({ authenticated: false });
     if (isWebSocketMahayanaHostConfigured()) return new WebSocketMahayanaHostTransport();
-    if (isElectronMahayanaHostAvailable()) return new ElectronMahayanaHostTransport();
-    return new WasmMahayanaHostTransport();
+    throw new Error("Fabushi Web requires NEXT_PUBLIC_MAHAYANA_GATEWAY_URL; native/WASM runtime fallbacks are not allowed in the Web product.");
   }, [hostTestMode, screenshotMode]);
   const coordinator = useMemo(() => new MahayanaCoordinator(transport), [transport]);
   const requestSequence = useRef(0);
