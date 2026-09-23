@@ -30,7 +30,7 @@ test('browser refresh reconnects to same durable run without duplicate execution
   t.after(async () => { for (const child of children.splice(0)) child.kill('SIGTERM'); await rm(data, { recursive: true, force: true }); });
   const common = { NODE_ENV: 'test', FABUSHI_INTERNAL_TOKEN: 'integration-internal-token' };
   start('source/box-exec-daemon/server.mjs', { ...common, FABUSHI_RUNNER_PORT: String(ports.runner), FABUSHI_RUNNER_DATA_DIR: path.join(data, 'runner') });
-  start('source/host/server.mjs', { ...common, FABUSHI_HOST_PORT: String(ports.host), FABUSHI_RUNNER_URL: `http://127.0.0.1:${ports.runner}`, FABUSHI_HOST_DATA_DIR: path.join(data, 'host'), FABUSHI_HOST_TEST_PROVIDER: 'deterministic', FABUSHI_HOST_TEST_STEP_DELAY_MS: '350' });
+  start('source/host/server.mjs', { ...common, FABUSHI_HOST_PORT: String(ports.host), FABUSHI_RUNNER_URL: `http://127.0.0.1:${ports.runner}`, FABUSHI_HOST_DATA_DIR: path.join(data, 'host'), FABUSHI_HOST_TEST_PROVIDER: 'deterministic', FABUSHI_HOST_TEST_STEP_DELAY_MS: '1200' });
   start('source/mahayana-agent-coordinator/server.mjs', { ...common, FABUSHI_COORDINATOR_PORT: String(ports.coordinator), FABUSHI_HOST_URL: `http://127.0.0.1:${ports.host}`, FABUSHI_COORDINATOR_DATA_DIR: path.join(data, 'coordinator') });
   start('source/web-main/server.mjs', { ...common, FABUSHI_WEB_MAIN_PORT: String(ports.web), FABUSHI_COORDINATOR_URL: `http://127.0.0.1:${ports.coordinator}`, FABUSHI_WEB_SESSION_SECRET: 'integration-session-secret-1234567890', FABUSHI_DEV_BEARER_TOKEN: 'integration-token', FABUSHI_ALLOWED_ORIGINS: origin });
   await Promise.all([waitHealth(`http://127.0.0.1:${ports.runner}/healthz`),waitHealth(`http://127.0.0.1:${ports.host}/healthz`),waitHealth(`http://127.0.0.1:${ports.coordinator}/healthz`),waitHealth(`http://127.0.0.1:${ports.web}/healthz`)]);
@@ -63,5 +63,34 @@ test('browser refresh reconnects to same durable run without duplicate execution
   assert.equal(runEvents.filter((record) => record.event.type === 'operation.started').length, 1);
   assert.equal(runEvents.filter((record) => record.event.type === 'agent.step' && record.event.kind === 'tool' && record.event.status === 'running').length, 1);
   assert.equal(runEvents.filter((record) => record.event.type === 'operation.completed').length, 1);
+
+  const cancelCommand = { type: 'chat.send', requestId: 'turn-request-cancel', text: 'Please use the runtime tool and then answer.', agentId: 'assistant' };
+  ws.sendJson(requestFrame('rpc-cancel-start', 'runtime.execute', { command: cancelCommand }));
+  const cancelAccepted = await ws.waitFor((message) => message.kind === 'reply' && message.requestId === 'rpc-cancel-start');
+  assert.equal(cancelAccepted.ok, true);
+  const cancelledOperationId = cancelAccepted.result.operationId;
+  await ws.waitFor((message) => message.kind === 'event' && message.runId === cancelledOperationId && message.event?.type === 'agent.step' && message.event?.kind === 'tool' && message.event?.status === 'running', 8000);
+
+  ws.sendJson(requestFrame('rpc-cancel', 'runtime.interrupt', { operationId: cancelledOperationId }));
+  const cancelReply = await ws.waitFor((message) => message.kind === 'reply' && message.requestId === 'rpc-cancel', 8000);
+  assert.equal(cancelReply.ok, true);
+  assert.equal(cancelReply.result.state, 'cancelled');
+  await ws.waitFor((message) => message.kind === 'event' && message.runId === cancelledOperationId && message.event?.type === 'operation.interrupted', 8000);
+  await new Promise((resolve) => setTimeout(resolve, 400));
+
+  ws.sendJson(requestFrame('rpc-cancel-resync', 'runtime.resync', { afterSeq: 0 }));
+  const cancelResync = await ws.waitFor((message) => message.kind === 'reply' && message.requestId === 'rpc-cancel-resync');
+  const cancelledEvents = cancelResync.result.events.filter((record) => record.runId === cancelledOperationId);
+  assert.equal(cancelledEvents.filter((record) => record.event.type === 'operation.interrupted').length, 1);
+  assert.equal(cancelledEvents.filter((record) => record.event.type === 'operation.completed').length, 0);
+  assert.equal(cancelledEvents.filter((record) => record.event.type === 'operation.failed').length, 0);
+
+  ws.sendJson(requestFrame('rpc-cancel-duplicate', 'runtime.execute', { command: cancelCommand }));
+  const cancelDuplicate = await ws.waitFor((message) => message.kind === 'reply' && message.requestId === 'rpc-cancel-duplicate');
+  assert.equal(cancelDuplicate.result.operationId, cancelledOperationId);
+  assert.equal(cancelDuplicate.result.deduplicated, true);
+  ws.sendJson(requestFrame('rpc-cancel-run', 'runtime.run', { runId: cancelledOperationId }));
+  const cancelledRun = await ws.waitFor((message) => message.kind === 'reply' && message.requestId === 'rpc-cancel-run');
+  assert.equal(cancelledRun.result.state, 'cancelled');
   ws.close();
 });
