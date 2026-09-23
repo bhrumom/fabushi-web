@@ -145,6 +145,7 @@ export function publicRun(run) {
     agentId: run.agentId,
     state: run.state,
     generation: run.generation,
+    background: Boolean(run.background),
     ...(run.currentStep ? { currentStep: run.currentStep } : {}),
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
