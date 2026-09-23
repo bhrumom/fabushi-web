@@ -3675,6 +3675,13 @@ export default function HostClient({ onAuthStateChange }: HostClientProps) {
                     onResolveDraft={resolveDraft}
                     onProvideSecret={provideSecret}
                     onConnectListener={connectListener}
+                    onOpenMiniApp={(card) => {
+                      setOpenedMiniApp(card.miniAppId);
+                      setOpenedMiniAppHtml(card.html);
+                      setActiveAgentId(card.miniAppId);
+                      setMarketplaceOpen(false);
+                      setComputerOpen(true);
+                    }}
                   />
                 ))}
               </div>
