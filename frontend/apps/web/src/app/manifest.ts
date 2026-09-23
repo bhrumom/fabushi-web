@@ -9,18 +9,26 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "Fabushi",
     short_name: "Fabushi",
     description: "跨平台 Messenger、AI Agents 与 Mini Apps Host，内置 WebMCP、应用发现和内容级搜索。",
-    start_url: siteHref("/"),
+    start_url: siteHref("/host"),
     scope: siteHref("/"),
     display: "standalone",
     background_color: "#000000",
     theme_color: "#000000",
     categories: ["social", "productivity", "utilities"],
+    icons: [
+      {
+        src: siteHref("/fabushi-app-icon.svg"),
+        sizes: "any",
+        type: "image/svg+xml",
+        purpose: "any maskable",
+      },
+    ],
     shortcuts: [
       {
         name: "打开 Fabushi",
         short_name: "聊天",
         description: "进入 Fabushi Messenger 与 AI Agent Host",
-        url: siteHref("/"),
+        url: siteHref("/host"),
       },
       {
         name: "Mini Apps",
