@@ -6,6 +6,7 @@ import { AtomicJsonStore } from "../shared/atomic-json-store.mjs";
 import { ProtocolError, asRecord, nowIso, requireString } from "../shared/protocol.mjs";
 import { McpClientPool } from "./mcp-client.mjs";
 import { RemoteComputerService } from "./remote-computer-service.mjs";
+import { AttachmentService } from "./attachment-service.mjs";
 
 const MAX_ARTIFACT_BYTES = 32 * 1024 * 1024;
 const MAX_UI_BYTES = 2 * 1024 * 1024;
@@ -170,6 +171,7 @@ export class HostProductService {
     this.store = new AtomicJsonStore(path.join(dataDir, "product-state.json"), initialProductState);
     this.mcp = new McpClientPool();
     this.remoteComputer = new RemoteComputerService({ dataDir, platformApiBase });
+    this.attachments = new AttachmentService({ dataDir });
     this.platformApiBase = platformApiBase.replace(/\/$/, "");
   }
 
@@ -190,6 +192,7 @@ export class HostProductService {
   }
 
   async runtimeCommand(ownerId, command) {
+    if (command.type.startsWith("attachment.") || command.type === "search.media") return await this.attachments.runtimeCommand(ownerId, command);
     const ownerState = await this.#ownerState(ownerId);
     switch (command.type) {
       case "mcp.list": {

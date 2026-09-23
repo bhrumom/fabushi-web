@@ -6,7 +6,55 @@ import { ProtocolError, TERMINAL_RUN_STATES, errorEnvelope, makeRun, nowIso, pub
 const DEFAULT_AGENT_ID = 'assistant';
 const DEFAULT_CONVERSATION_ID = 'mahayana-ai:agent:assistant';
 function initialState() {
-  return { version: 1, nextSeq: 1, runs: {}, requestIndex: {}, approvals: {}, events: [], conversations: { [DEFAULT_CONVERSATION_ID]: { id: DEFAULT_CONVERSATION_ID, title: 'Mahayana（大乘 AI）', kind: 'agent', pinned: true, updatedAtMs: Date.now(), messages: [] } } };
+  return { version: 2, nextSeq: 1, runs: {}, requestIndex: {}, approvals: {}, events: [], conversationsByOwner: {} };
+}
+function defaultConversation() {
+  return { id: DEFAULT_CONVERSATION_ID, title: 'Mahayana（大乘 AI）', kind: 'agent', pinned: true, updatedAtMs: Date.now(), messages: [] };
+}
+function ownerConversations(state, ownerId, create = false) {
+  state.conversationsByOwner ??= {};
+  if (create) {
+    state.conversationsByOwner[ownerId] ??= {};
+    state.conversationsByOwner[ownerId][DEFAULT_CONVERSATION_ID] ??= defaultConversation();
+  }
+  return state.conversationsByOwner[ownerId] ?? {};
+}
+function migrateConversationOwnership(state) {
+  if (state.version >= 2 && state.conversationsByOwner) return;
+  const rebuilt = {};
+  const ensure = (ownerId, conversationId) => {
+    rebuilt[ownerId] ??= {};
+    rebuilt[ownerId][conversationId] ??= {
+      id: conversationId,
+      title: conversationId === DEFAULT_CONVERSATION_ID ? 'Mahayana（大乘 AI）' : conversationId,
+      kind: 'agent',
+      pinned: conversationId === DEFAULT_CONVERSATION_ID,
+      updatedAtMs: 0,
+      messages: [],
+    };
+    return rebuilt[ownerId][conversationId];
+  };
+  for (const record of Array.isArray(state.events) ? state.events : []) {
+    if (!record?.ownerId || record?.event?.type !== 'chat.message') continue;
+    const conversationId = record.conversationId || DEFAULT_CONVERSATION_ID;
+    const conversation = ensure(record.ownerId, conversationId);
+    const text = String(record.event.text || '');
+    const role = record.event.role === 'assistant' ? 'assistant' : 'user';
+    const createdAtMs = Date.parse(record.timestamp || record.event.timestamp || '') || Date.now();
+    const id = `${record.runId || 'event'}:${record.seq}`;
+    if (!conversation.messages.some((message) => message.id === id)) {
+      conversation.messages.push({ id, role, text, createdAtMs, ...(record.runId ? { runId: record.runId } : {}) });
+      conversation.updatedAtMs = Math.max(conversation.updatedAtMs, createdAtMs);
+      if (role === 'user' && conversation.title === conversationId) conversation.title = text.slice(0, 72) || conversation.title;
+    }
+  }
+  for (const run of Object.values(state.runs || {})) {
+    if (!run?.ownerId || !run?.conversationId) continue;
+    ensure(run.ownerId, run.conversationId);
+  }
+  state.conversationsByOwner = rebuilt;
+  delete state.conversations;
+  state.version = 2;
 }
 function eventRunState(event, current) {
   if (event.type === 'operation.completed') return 'completed';
@@ -29,6 +77,7 @@ export class MahayanaCoordinatorService {
     this.executing = new Set();
   }
   async initialize() {
+    await this.store.update((draft) => migrateConversationOwnership(draft));
     const state = await this.store.read();
     const active = Object.values(state.runs).filter((run) => !TERMINAL_RUN_STATES.has(run.state));
     for (const run of active) {
@@ -69,6 +118,7 @@ export class MahayanaCoordinatorService {
       case 'subagent.list': return await this.#emit(ownerId, command, { type: 'subagent.listed', agentId: command.agentId, subagents: [] });
       case 'asyncTask.list': return await this.#emit(ownerId, command, { type: 'asyncTask.listed', agentId: command.agentId, tasks: [] });
       case 'capability.request': return await this.#requestCapabilityApproval(ownerId, command);
+      case 'search.messages': return await this.#searchMessages(ownerId, command);
       case 'mcp.list':
       case 'mcp.apps':
       case 'mcp.oauthLogin':
@@ -80,6 +130,11 @@ export class MahayanaCoordinatorService {
       case 'mcp.toolCall':
       case 'marketplace.install':
       case 'miniapp.open':
+      case 'attachment.upload':
+      case 'attachment.readText':
+      case 'attachment.readChunk':
+      case 'attachment.readImage':
+      case 'search.media':
         return await this.#executeProductCommand(ownerId, command);
       case 'session.clear': return await this.#emit(ownerId, command, { type: 'session.cleared' });
       default: throw new ProtocolError('COMMAND_NOT_IMPLEMENTED', `Runtime command is not implemented by Web Coordinator yet: ${command.type}`);
@@ -92,7 +147,8 @@ export class MahayanaCoordinatorService {
       const existingRunId = state.requestIndex[requestKey];
       if (existingRunId && state.runs[existingRunId]) { result = { requestId: command.requestId, operationId: existingRunId, deduplicated: true }; return; }
       const conversationId = command.conversationId || DEFAULT_CONVERSATION_ID;
-      state.conversations[conversationId] ??= { id: conversationId, title: command.text.slice(0, 72), kind: 'agent', pinned: false, updatedAtMs: Date.now(), messages: [] };
+      const conversations = ownerConversations(state, ownerId, true);
+      conversations[conversationId] ??= { id: conversationId, title: command.text.slice(0, 72), kind: 'agent', pinned: false, updatedAtMs: Date.now(), messages: [] };
       const run = makeRun({ requestId: command.requestId, ownerId, conversationId, agentId: command.agentId || DEFAULT_AGENT_ID, text: command.text });
       run.model = command.model;
       run.mode = command.mode || 'agent';
@@ -155,7 +211,7 @@ export class MahayanaCoordinatorService {
       if (run.state === 'completed' || run.state === 'failed') run.completedAt = nowIso();
       if (event.type === 'operation.failed') run.error = { code: event.code, message: event.message };
       if (event.type === 'chat.message') {
-        const conversation = state.conversations[run.conversationId];
+        const conversation = ownerConversations(state, run.ownerId, true)[run.conversationId];
         if (conversation) {
           const messageId = `${run.runId}:${hostIndex}`;
           if (!conversation.messages.some((message) => message.id === messageId)) {
@@ -309,13 +365,36 @@ export class MahayanaCoordinatorService {
   }
   async #emitConversationList(ownerId, command) {
     const state = await this.store.read();
-    const conversations = Object.values(state.conversations).map(({ messages, ...conversation }) => ({ ...conversation, unreadCount: 0 })).sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+    const conversations = Object.values(ownerConversations(state, ownerId, false)).map(({ messages, ...conversation }) => ({ ...conversation, unreadCount: 0 })).sort((a, b) => b.updatedAtMs - a.updatedAtMs);
     return await this.#emit(ownerId, command, { type: 'conversation.listed', conversations });
   }
   async #emitConversationOpen(ownerId, command) {
     const state = await this.store.read();
-    const conversation = state.conversations[command.conversationId];
+    const conversation = ownerConversations(state, ownerId, false)[command.conversationId];
     return await this.#emit(ownerId, command, { type: 'conversation.opened', conversationId: command.conversationId, messages: conversation?.messages ?? [] });
+  }
+  async #searchMessages(ownerId, command) {
+    const query = requireString(command.query, 'query', { max: 512 }).normalize('NFKC').toLocaleLowerCase();
+    const limit = Number.isSafeInteger(command.limit) ? Math.min(Math.max(command.limit, 1), 100) : 50;
+    const state = await this.store.read();
+    const matches = [];
+    for (const conversation of Object.values(ownerConversations(state, ownerId, false))) {
+      const agentId = conversation.id.startsWith('mahayana-ai:agent:') ? conversation.id.slice('mahayana-ai:agent:'.length) || DEFAULT_AGENT_ID : DEFAULT_AGENT_ID;
+      for (const message of conversation.messages || []) {
+        if (!String(message.text || '').normalize('NFKC').toLocaleLowerCase().includes(query)) continue;
+        matches.push({
+          agentId,
+          agentName: agentId === DEFAULT_AGENT_ID ? 'Mahayana' : agentId,
+          conversationId: conversation.id,
+          entryId: message.id,
+          role: message.role === 'assistant' ? 'assistant' : 'user',
+          timestampMs: Number(message.createdAtMs) || 0,
+          snippet: String(message.text || '').slice(0, 400),
+        });
+      }
+    }
+    matches.sort((a, b) => b.timestampMs - a.timestampMs);
+    return await this.#emit(ownerId, command, { type: 'search.messages', query: command.query, matches: matches.slice(0, limit) });
   }
   async #emit(ownerId, command, event) {
     await this.store.update((state) => { this.#appendEvent(state, ownerId, null, event.conversationId || DEFAULT_CONVERSATION_ID, { ...event, timestamp: nowIso() }); });
