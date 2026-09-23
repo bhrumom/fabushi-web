@@ -322,6 +322,10 @@ test("real Chromium reload restores the same durable tool-running run and comple
   await waitExpression(cdp, "document.readyState === 'complete'", { label: "host reload after onboarding setup" });
   await waitExpression(cdp, "document.querySelector('[data-testid=host-status]')?.textContent?.includes('Host 已连接') === true", { timeoutMs: 20_000, label: "authenticated WebSocket Host ready" });
   assert.equal(await evaluate(cdp, "document.querySelector('[data-testid=login-gate]') === null"), true);
+  await waitExpression(cdp, "navigator.serviceWorker.getRegistration().then((registration) => Boolean(registration?.active))", {
+    timeoutMs: 10_000,
+    label: "active production service worker",
+  });
 
   const prompt = "Please inspect the runtime capabilities with the runtime tool and summarize them.";
   const inputValue = await evaluate(cdp, `(() => {
