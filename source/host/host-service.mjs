@@ -23,6 +23,30 @@ function extractProviderText(payload) {
   return '';
 }
 
+function throwIfCancelled(signal) {
+  if (signal?.aborted) throw new ProtocolError('TURN_CANCELLED', 'Turn was cancelled');
+}
+
+async function cancellableDelay(ms, signal) {
+  throwIfCancelled(signal);
+  await new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (fn) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener('abort', onAbort);
+      fn();
+    };
+    const timer = setTimeout(() => finish(resolve), ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      finish(() => reject(new ProtocolError('TURN_CANCELLED', 'Turn was cancelled')));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+  });
+}
+
 export class HostRuntime {
   constructor({ dataDir = process.env.FABUSHI_HOST_DATA_DIR || path.resolve('.data/host'), runnerUrl = process.env.FABUSHI_RUNNER_URL || 'http://127.0.0.1:8790', internalToken = process.env.FABUSHI_INTERNAL_TOKEN || '' } = {}) {
     this.runnerUrl = runnerUrl.replace(/\/$/, '');
@@ -46,10 +70,40 @@ export class HostRuntime {
       try { await existing.done; } finally { existing.subscribers.delete(onEvent); }
       return;
     }
-    const active = { events: [], subscribers: new Set([onEvent]), done: null };
+    const active = { runId: turn.runId, events: [], subscribers: new Set([onEvent]), done: null, controller: new AbortController() };
     active.done = this.#executeTurn(turn, active).finally(() => this.active.delete(turn.executionKey));
     this.active.set(turn.executionKey, active);
     await active.done;
+  }
+
+  async cancelTurn(input) {
+    const value = asRecord(input);
+    if (!value) throw new ProtocolError('INVALID_ARGUMENT', 'Host cancellation request must be an object');
+    const executionKey = requireString(value.executionKey, 'executionKey', { max: 256 });
+    const runId = requireString(value.runId, 'runId', { max: 128 });
+    const active = this.active.get(executionKey);
+    if (active) {
+      if (active.runId !== runId) throw new ProtocolError('RUN_MISMATCH', 'Cancellation runId does not match active execution');
+      active.controller.abort();
+      await active.done.catch(() => undefined);
+    } else {
+      await this.store.update((state) => {
+        const record = state.executions[executionKey];
+        if (!record) throw new ProtocolError('TURN_NOT_FOUND', 'Host execution not found');
+        if (record.runId !== runId) throw new ProtocolError('RUN_MISMATCH', 'Cancellation runId does not match persisted execution');
+        if (record.status === 'completed' || record.status === 'failed' || record.status === 'cancelled') return;
+        record.events ??= [];
+        if (!record.events.some((event) => event?.type === 'operation.interrupted')) {
+          record.events.push({ timestamp: nowIso(), operationId: runId, type: 'operation.interrupted' });
+        }
+        record.status = 'cancelled';
+        record.updatedAt = nowIso();
+      });
+    }
+    const latest = await this.store.read();
+    const record = latest.executions[executionKey];
+    if (!record) throw new ProtocolError('TURN_NOT_FOUND', 'Host execution not found');
+    return { runId, executionKey, state: record.status };
   }
 
   #validateTurn(input) {
@@ -80,6 +134,7 @@ export class HostRuntime {
       }
     };
     try {
+      throwIfCancelled(active.controller.signal);
       await emit({ type: 'operation.started', label: 'Agent run', interruptible: true });
       await emit({ type: 'chat.message', role: 'user', text: turn.text });
       await emit({ type: 'agent.step', stepId: 'prepare', kind: 'preparing', title: 'Preparing', status: 'running' });
@@ -90,22 +145,37 @@ export class HostRuntime {
       if (toolSpec) {
         await emit({ type: 'agent.step', stepId: `tool:${toolSpec.tool}`, kind: 'tool', title: `Tool · ${toolSpec.tool}`, detail: 'Running', status: 'running' });
         const testStepDelay = Number(process.env.FABUSHI_HOST_TEST_STEP_DELAY_MS || 0);
-        if (testStepDelay > 0 && process.env.NODE_ENV !== 'production') await new Promise((resolve) => setTimeout(resolve, testStepDelay));
-        toolContext = await this.#runTool(turn, toolSpec);
+        if (testStepDelay > 0 && process.env.NODE_ENV !== 'production') await cancellableDelay(testStepDelay, active.controller.signal);
+        toolContext = await this.#runTool(turn, toolSpec, active.controller.signal);
+        throwIfCancelled(active.controller.signal);
         await emit({ type: 'agent.step', stepId: `tool:${toolSpec.tool}`, kind: 'tool', title: `Tool · ${toolSpec.tool}`, detail: JSON.stringify(toolContext), status: 'completed' });
       }
       await emit({ type: 'agent.step', stepId: 'thinking', kind: 'thinking', title: 'Thinking', status: 'completed' });
       const provider = process.env.FABUSHI_HOST_TEST_PROVIDER === 'deterministic' ? 'deterministic-test' : 'configured-provider';
       const model = turn.model || process.env.FABUSHI_INFERENCE_MODEL || 'auto';
       await emit({ type: 'model.routed', provider, model, mode: 'agent' });
-      const answer = await this.#infer(turn, toolContext);
+      throwIfCancelled(active.controller.signal);
+      const answer = await this.#infer(turn, toolContext, active.controller.signal);
+      throwIfCancelled(active.controller.signal);
       await emit({ type: 'agent.step', stepId: 'stream', kind: 'streaming', title: 'Streaming', status: 'running' });
-      for (const delta of chunkText(answer)) await emit({ type: 'chat.delta', delta });
+      for (const delta of chunkText(answer)) {
+        throwIfCancelled(active.controller.signal);
+        await emit({ type: 'chat.delta', delta });
+      }
       await emit({ type: 'chat.message', role: 'assistant', text: answer });
       await emit({ type: 'agent.step', stepId: 'stream', kind: 'streaming', title: 'Streaming', status: 'completed' });
       await emit({ type: 'operation.completed' });
       await this.store.update((state) => { state.executions[turn.executionKey].status = 'completed'; state.executions[turn.executionKey].updatedAt = nowIso(); });
     } catch (error) {
+      if (active.controller.signal.aborted || error?.code === 'TURN_CANCELLED') {
+        await emit({ type: 'operation.interrupted' });
+        await this.store.update((state) => {
+          state.executions[turn.executionKey] ??= { runId: turn.runId, events: active.events, createdAt: nowIso() };
+          state.executions[turn.executionKey].status = 'cancelled';
+          state.executions[turn.executionKey].updatedAt = nowIso();
+        });
+        return;
+      }
       const failure = errorEnvelope(error);
       await emit({ type: 'operation.failed', code: failure.code, message: failure.message });
       await this.store.update((state) => {
@@ -117,18 +187,20 @@ export class HostRuntime {
     }
   }
 
-  async #runTool(turn, spec) {
+  async #runTool(turn, spec, signal) {
     const response = await fetch(`${this.runnerUrl}/v1/tools/execute`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(this.internalToken ? { authorization: `Bearer ${this.internalToken}` } : {}) },
       body: JSON.stringify({ idempotencyKey: `${turn.executionKey}:tool:${spec.tool}`, tool: spec.tool, args: spec.args }),
+      signal,
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok || body?.ok === false || body?.error) throw new ProtocolError('RUNNER_FAILED', body?.error?.message || body?.message || `Runner failed with HTTP ${response.status}`);
     return body.result;
   }
 
-  async #infer(turn, toolContext) {
+  async #infer(turn, toolContext, signal) {
+    throwIfCancelled(signal);
     if (process.env.FABUSHI_HOST_TEST_PROVIDER === 'deterministic') {
       const toolLine = toolContext ? ` Tool result: ${JSON.stringify(toolContext)}.` : '';
       return `Completed durable run ${turn.runId}.${toolLine} Response to: ${turn.text}`;
@@ -145,7 +217,7 @@ export class HostRuntime {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
       body: JSON.stringify({ model: turn.model || process.env.FABUSHI_INFERENCE_MODEL || 'auto', messages, stream: false }),
-      signal: AbortSignal.timeout(Number(process.env.FABUSHI_INFERENCE_TIMEOUT_MS || 120_000)),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(Number(process.env.FABUSHI_INFERENCE_TIMEOUT_MS || 120_000))]),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new ProtocolError('PROVIDER_FAILED', payload?.error?.message || `Inference HTTP ${response.status}`);
