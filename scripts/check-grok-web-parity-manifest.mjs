@@ -129,8 +129,11 @@ if (STRICT) {
   const hostClient = 'frontend/apps/web/src/app/host/host-client.tsx';
   if (await pathExists(hostClient)) {
     const source = await fs.readFile(hostClient, 'utf8');
-    for (const forbidden of ['electron-transport', 'mock-transport', 'wasm-transport']) {
+    for (const forbidden of ['electron-transport', 'wasm-transport']) {
       if (source.includes(forbidden)) fail(`strict mode forbids legacy Host fallback ${forbidden} in ${hostClient}`);
+    }
+    if (source.includes('mock-transport') && !source.includes('NEXT_PUBLIC_HOST_SCREENSHOT_MODE')) {
+      fail(`strict mode allows Mock Host only behind the explicit screenshot/test gate in ${hostClient}`);
     }
   }
 }
