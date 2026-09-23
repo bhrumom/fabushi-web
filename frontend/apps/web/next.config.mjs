@@ -2,10 +2,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const rawBasePath = process.env.NEXT_PUBLIC_SITE_BASE_PATH?.trim() ?? "";
-const basePath =
-  rawBasePath && rawBasePath !== "/"
-    ? `/${rawBasePath.replace(/^\\/+|\\/+$/g, "")}`
-    : "";
+const normalizedBasePath = rawBasePath.split("/").filter(Boolean).join("/");
+const basePath = normalizedBasePath ? `/${normalizedBasePath}` : "";
 const appDir = path.dirname(fileURLToPath(import.meta.url));
 
 const nextConfig = {
