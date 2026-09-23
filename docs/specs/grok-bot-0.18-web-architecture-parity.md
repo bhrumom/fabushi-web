@@ -704,14 +704,16 @@ For `not-applicable` records, completion evidence must instead show:
 
 ## 5. Current state
 
-At target baseline `c481dea9e2624a4903fe68e22e22760a47ef7727`:
+The Spec was authored from target baseline `c481dea9e2624a4903fe68e22e22760a47ef7727`. The latest verified implementation baseline on PR #3 is `86a51ba1d50f7a5a593c375ede06a989084cbeeb`, validated by GitHub Actions run `35825476747`:
 
-- the repository contains the canonical Fabushi Web boundary;
-- the current product is primarily under `frontend/apps/web/**`;
-- the repository already includes app, host, marketplace, miniapp, remote-computer, runtime, content, and official-site surfaces;
-- the repository does not yet contain the full Grok-shaped `source/web-main`, Web preload, Mahayana Coordinator, Host, Runner, shared, and package structure required by this Spec;
-- there is no committed 2,111-entry Grok parity manifest;
-- therefore Grok Bot 0.18 Web architecture parity is not complete.
+- the canonical browser product remains under `frontend/apps/web/**`;
+- `docs/architecture/grok-bot-0.18-web-parity-manifest.json` now contains exactly 2,111 records for the pinned Grok source tree, and the strict source path/blob-SHA check passes;
+- the repository now contains a production-shaped vertical slice across `source/web-main/**`, `source/mahayana-agent-coordinator/**`, `source/host/**`, `source/box-exec-daemon/**`, and `source/shared/**`;
+- when `NEXT_PUBLIC_MAHAYANA_GATEWAY_URL` is configured, the existing Host UI selects the authenticated WebSocket transport; the browser-WASM path still exists as an unconfigured migration fallback, so legacy/fallback closure is not complete;
+- the durable integration test proves one accepted turn can reach preparing/thinking/tool-running/streaming/completed, disconnect during tool execution, reconnect/resync the same operation, and avoid duplicate operation/tool/completion events;
+- the same exact HEAD passes the Host TypeScript check and the full Next production build;
+- the manifest still contains 2,101 `planned` and 10 `implementing` records, and browser E2E, full MCP/plugin routing, remote-computer, local-runner, PWA, security, browser-matrix, and final strict-closure evidence remain incomplete;
+- therefore Grok Bot 0.18 Web architecture parity is **not** complete.
 
 This Spec does not classify existing Fabushi files as obsolete automatically. The per-file audit/disposition and product-responsibility plan must determine whether they are retained as demonstrated equivalents, migrated, replaced, split/merged into new Web-owned modules, or removed.
 
@@ -1187,17 +1189,17 @@ Initial state: this Spec is the implementation gate. Product migration has not b
 | Requirement / AC | Status | Evidence / reason |
 | --- | --- | --- |
 | R1 | passed | Reference repository and exact commit pinned in this Spec. |
-| R2 | pending | 2,111-entry audit manifest not yet committed; it must map responsibilities/effects without requiring 2,111 target files. |
-| R3 | pending | Target runtime boundaries not yet proven. |
+| R2 | passed | 2,111-entry audit manifest is committed and exact source path/blob-SHA verification passed on `86a51ba1d50f7a5a593c375ede06a989084cbeeb` in run `35825476747`. |
+| R3 | pending | A Browser → Web Main → Coordinator → Host → Runner vertical slice is production-wired and tested, but the complete target architecture is not yet closed across all product responsibilities. |
 | R4 | pending | Per-file target mapping must be generated. |
 | R5 | pending | Legacy/parallel runtime audit not yet complete. |
 | R6 | pending | Frontend parity not yet proven. |
-| R7 | pending | Platform runtime abstraction not yet proven. |
-| R8 | pending | WebSocket coordinator parity not yet proven. |
-| R9 | pending | Web Main/Gateway not yet proven. |
-| R10 | pending | Mahayana Coordinator not yet proven. |
-| R11 | pending | Host parity not yet proven. |
-| R12 | pending | Runner parity not yet proven. |
+| R7 | pending | Configured Web sessions now use a typed WebSocket `MahayanaHostTransport`; remaining transport methods and fallback removal are not complete. |
+| R8 | pending | Lifecycle/request/reply/event plus reconnect/resync are tested for the representative durable turn; full cancellation/version/multi-tab/failure coverage remains open. |
+| R9 | pending | Web Main now owns authenticated session exchange, origin-gated WebSocket upgrade, heartbeat, request routing and event pumping for the vertical slice; full production auth/security/product routing remains open. |
+| R10 | pending | Durable request de-duplication, run identity, owner isolation, event sequencing and resync are implemented for the vertical slice; full Grok Coordinator responsibility set remains open. |
+| R11 | pending | Host inference/tool/streaming turn flow is wired for the representative vertical slice; full Host domains, MCP, approvals and recovery behavior remain open. |
+| R12 | pending | An allow-listed idempotent Runner boundary is wired and exercised by the durable turn test; full Runner capability/lifecycle parity remains open. |
 | R13 | pending | MCP parity not yet proven. |
 | R14 | pending | Auth/identity parity not yet proven. |
 | R15 | pending | Attachment/media parity not yet proven. |
@@ -1205,8 +1207,8 @@ Initial state: this Spec is the implementation gate. Product migration has not b
 | R17 | pending | PWA/Telegram-Web-like behavior not yet proven. |
 | R18 | pending | Per-module language decisions not yet present in manifest. |
 | R19 | pending | Shared-contract ownership audit not yet complete. |
-| R20 | pending | Wire schema/versioning implementation not yet proven. |
-| R21 | pending | Failure/recovery matrix not yet proven. |
+| R20 | pending | Protocol v1 lifecycle/request/reply/event framing is implemented and contract-tested, but complete schema/version-negotiation/error compatibility is not yet proven. |
+| R21 | pending | Browser-connection loss with same-run resync/no-duplication is proven; Host/Coordinator/Runner crash, stale-generation and other required failure cases remain open. |
 | R22 | pending | Security gates not yet proven. |
 | R23 | pending | Performance measurements not yet established. |
 | R24 | pending | Accessibility/browser responsiveness not yet proven. |
@@ -1214,12 +1216,12 @@ Initial state: this Spec is the implementation gate. Product migration has not b
 | R26 | pending | Production provenance/asset audit not yet complete. |
 | R27 | pending | Completion evidence rules apply during implementation. |
 | AC-1 | passed | Exact Grok baseline is fixed. |
-| AC-2 | pending | Manifest missing. |
+| AC-2 | passed | All 2,111 pinned source files are represented exactly once and the strict source tree/blob-SHA check passed in run `35825476747`. |
 | AC-3 | pending | Per-source audit and per-product-responsibility Web parity closure not yet performed. |
-| AC-4 | pending | Runtime boundaries not yet verified. |
+| AC-4 | pending | Distinct Web Main/Coordinator/Host/Runner boundaries are verified for the first vertical slice; full browser-bridge and product-domain closure remains incomplete. |
 | AC-5 | pending | Electron-free production proof not yet available. |
 | AC-6 | pending | UI/behavior E2E evidence not yet available. |
-| AC-7 | pending | Transport E2E evidence not yet available. |
+| AC-7 | pending | Request/reply/event/lifecycle/reconnect/resync have integration evidence for the representative turn; full cancellation and required transport failure coverage remains incomplete. |
 | AC-8 | pending | Crash/recovery evidence not yet available. |
 | AC-9 | pending | MCP E2E evidence not yet available. |
 | AC-10 | pending | Auth/security evidence not yet available. |
@@ -1229,8 +1231,8 @@ Initial state: this Spec is the implementation gate. Product migration has not b
 | AC-14 | pending | PWA evidence not yet available. |
 | AC-15 | pending | Legacy fallback audit not yet complete. |
 | AC-16 | pending | Strict checker not yet implemented. |
-| AC-17 | pending | Exact-HEAD CI not yet run. |
+| AC-17 | pending | Run `35825476747` is green for strict manifest, runtime contract/integration, Host typecheck and full Next build on exact HEAD `86a51ba…`; required browser E2E/security/matrix/final-closure gates are not yet present. |
 | AC-18 | pending | Final compliance review occurs after implementation. |
-| AC-19 | pending | End-to-end Grok Bot Web effect has not yet been proven in exact-HEAD browser acceptance. |
+| AC-19 | pending | The process/service integration proves the durable turn and reconnect semantics, but a real-browser production-shaped acceptance run with UI evidence is still required. |
 
 Allowed final compliance statuses are `passed`, `blocked`, and `not-applicable`. The `pending` values above are initial implementation-state markers and must be eliminated before final acceptance.

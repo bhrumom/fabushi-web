@@ -27,6 +27,15 @@ This generated companion summarizes the machine-readable 2,111-record audit inde
 
 ## Current implementation evidence
 
+Green vertical-slice baseline: `86a51ba1d50f7a5a593c375ede06a989084cbeeb`, GitHub Actions run `35825476747`.
+
 The first vertical slice establishes a production-shaped Browser/Web Main/Coordinator/Host/Runner boundary with durable request de-duplication, ordered event replay and reconnect/resync. The integration test disconnects during tool execution and verifies recovery of the same operation without duplicate start/tool/completion events.
 
-Full parity remains open until all records reach a final status and all Spec acceptance criteria have exact-HEAD evidence.
+At that exact SHA:
+
+- strict pinned-reference manifest verification: passed;
+- protocol + durable Web effect tests: 5/5 passed;
+- Host TypeScript check: passed;
+- full Next production build: passed.
+
+This is a baseline, not final parity. The manifest still has 2,101 `planned` and 10 `implementing` records. Browser E2E, full MCP/plugin routing, Remote Computer, paired local Runner, PWA/browser matrix, security/static gates, and final zero-unresolved strict closure remain open.
