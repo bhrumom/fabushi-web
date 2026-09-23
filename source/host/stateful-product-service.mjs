@@ -80,6 +80,44 @@ export class StatefulProductService {
     this.store = new AtomicJsonStore(path.join(dataDir, "stateful-product.json"), initialState);
   }
 
+  async invoke(ownerId, method, args = {}) {
+    switch (method) {
+      case "state.bot.list": {
+        const owner = await this.#owner(ownerId);
+        return Object.values(owner.bots);
+      }
+      case "state.group.get": {
+        const owner = await this.#owner(ownerId);
+        const id = requireString(args.id, "group.id", { max: 256 });
+        const group = owner.groups[id];
+        if (!group) throw new ProtocolError("GROUP_NOT_FOUND", "Group not found");
+        return group;
+      }
+      case "state.group.appendMessage": {
+        const id = requireString(args.id, "group.id", { max: 256 });
+        const content = requireString(args.content, "group.message", { max: 120_000 });
+        const speaker = args.speaker && typeof args.speaker === "object" && !Array.isArray(args.speaker) ? args.speaker : null;
+        if (!speaker || (speaker.kind !== "user" && speaker.kind !== "member")) throw new ProtocolError("INVALID_ARGUMENT", "Group speaker is invalid");
+        let group;
+        await this.store.update((state) => {
+          const owner = this.#ensureOwner(state, ownerId);
+          const current = owner.groups[id];
+          if (!current) throw new ProtocolError("GROUP_NOT_FOUND", "Group not found");
+          const normalizedSpeaker = speaker.kind === "user"
+            ? { kind: "user", ...(typeof speaker.name === "string" && speaker.name.trim() ? { name: speaker.name.trim().slice(0, 120) } : {}) }
+            : { kind: "member", id: requireString(speaker.id, "group.member.id", { max: 256 }), name: requireString(speaker.name, "group.member.name", { max: 160 }) };
+          current.messages.push({ id: `group-message-${randomUUID()}`, speaker: normalizedSpeaker, content, createdAtMs: Date.now() });
+          if (current.messages.length > 2000) current.messages.splice(0, current.messages.length - 2000);
+          current.updatedAtMs = Date.now();
+          group = structuredClone(current);
+        });
+        return group;
+      }
+      default:
+        throw new ProtocolError("METHOD_NOT_FOUND", `Stateful product method is not supported: ${method}`);
+    }
+  }
+
   async runtimeCommand(ownerId, command) {
     switch (command.type) {
       case "settings.get": return await this.settingsGet(ownerId);

@@ -6,7 +6,7 @@ import { ProtocolError, TERMINAL_RUN_STATES, errorEnvelope, makeRun, nowIso, pub
 const DEFAULT_AGENT_ID = 'assistant';
 const DEFAULT_CONVERSATION_ID = 'mahayana-ai:agent:assistant';
 function initialState() {
-  return { version: 2, nextSeq: 1, runs: {}, requestIndex: {}, approvals: {}, events: [], conversationsByOwner: {} };
+  return { version: 2, nextSeq: 1, runs: {}, requestIndex: {}, approvals: {}, events: [], conversationsByOwner: {}, peerMessagesByOwner: {} };
 }
 function defaultConversation() {
   return { id: DEFAULT_CONVERSATION_ID, title: 'Mahayana（大乘 AI）', kind: 'agent', pinned: true, updatedAtMs: Date.now(), messages: [] };
@@ -18,6 +18,16 @@ function ownerConversations(state, ownerId, create = false) {
     state.conversationsByOwner[ownerId][DEFAULT_CONVERSATION_ID] ??= defaultConversation();
   }
   return state.conversationsByOwner[ownerId] ?? {};
+}
+function ownerPeerMessages(state, ownerId, create = false) {
+  state.peerMessagesByOwner ??= {};
+  if (create) state.peerMessagesByOwner[ownerId] ??= [];
+  return state.peerMessagesByOwner[ownerId] ?? [];
+}
+function appendPeerMessage(state, ownerId, message) {
+  const messages = ownerPeerMessages(state, ownerId, true);
+  if (!messages.some((candidate) => candidate.id === message.id)) messages.push(message);
+  if (messages.length > 2000) messages.splice(0, messages.length - 2000);
 }
 function migrateConversationOwnership(state) {
   if (state.version >= 2 && state.conversationsByOwner) return;
@@ -77,7 +87,7 @@ export class MahayanaCoordinatorService {
     this.executing = new Set();
   }
   async initialize() {
-    await this.store.update((draft) => migrateConversationOwnership(draft));
+    await this.store.update((draft) => { migrateConversationOwnership(draft); draft.peerMessagesByOwner ??= {}; });
     const state = await this.store.read();
     const active = Object.values(state.runs).filter((run) => !TERMINAL_RUN_STATES.has(run.state));
     for (const run of active) {
@@ -116,6 +126,10 @@ export class MahayanaCoordinatorService {
       case 'asyncTask.list': return await this.#emit(ownerId, command, { type: 'asyncTask.listed', agentId: command.agentId, tasks: [] });
       case 'capability.request': return await this.#requestCapabilityApproval(ownerId, command);
       case 'search.messages': return await this.#searchMessages(ownerId, command);
+      case 'agent.send': return await this.#sendAgent(ownerId, command);
+      case 'agent.broadcast': return await this.#broadcastAgents(ownerId, command);
+      case 'agent.peerHistory': return await this.#peerHistory(ownerId, command);
+      case 'group.send': return await this.#sendGroup(ownerId, command);
       case 'bot.list':
       case 'bot.create':
       case 'bot.update':
@@ -181,6 +195,149 @@ export class MahayanaCoordinatorService {
     void this.#executeRun(result.operationId);
     return result;
   }
+
+  async #acceptBackgroundTurn(ownerId, input) {
+    const requestKey = `${ownerId}:${input.requestId}`;
+    let result;
+    await this.store.update((state) => {
+      const existingRunId = state.requestIndex[requestKey];
+      if (existingRunId && state.runs[existingRunId]) {
+        result = { requestId: input.requestId, operationId: existingRunId, deduplicated: true };
+        return;
+      }
+      const conversationId = `mahayana-ai:agent:${input.agentId}`;
+      const conversations = ownerConversations(state, ownerId, true);
+      conversations[conversationId] ??= { id: conversationId, title: input.agentName, kind: 'agent', pinned: false, updatedAtMs: Date.now(), messages: [] };
+      const run = makeRun({ requestId: input.requestId, ownerId, conversationId, agentId: input.agentId, text: input.text });
+      run.mode = 'agent';
+      run.hostEventIndex = 0;
+      run.background = {
+        source: input.source,
+        agentName: input.agentName,
+        ...(input.peerReplyTo ? { peerReplyTo: input.peerReplyTo } : {}),
+        ...(input.groupId ? { groupId: input.groupId } : {}),
+      };
+      state.runs[run.runId] = run;
+      state.requestIndex[requestKey] = run.runId;
+      this.#appendEvent(state, ownerId, run.runId, conversationId, {
+        type: 'agent.backgroundStarted',
+        timestamp: nowIso(),
+        agentId: input.agentId,
+        agentName: input.agentName,
+        operationId: run.runId,
+        source: input.source,
+      });
+      result = { requestId: input.requestId, operationId: run.runId, deduplicated: false };
+    });
+    void this.#executeRun(result.operationId);
+    return result;
+  }
+
+  async #botIndex(ownerId) {
+    const bots = await this.productRequest(ownerId, 'state.bot.list', {});
+    return new Map((Array.isArray(bots) ? bots : []).map((bot) => [bot.id, bot]));
+  }
+
+  async #sendAgent(ownerId, command) {
+    const requestKey = `${ownerId}:${command.requestId}`;
+    const current = await this.store.read();
+    const existingRunId = current.requestIndex?.[requestKey];
+    if (existingRunId && current.runs?.[existingRunId]) return { requestId: command.requestId, operationId: existingRunId, deduplicated: true };
+    const bots = await this.#botIndex(ownerId);
+    const fromAgentId = requireString(command.fromAgentId, 'fromAgentId', { max: 256 });
+    const targetId = requireString(command.targetId, 'targetId', { max: 256 });
+    const from = bots.get(fromAgentId);
+    const target = bots.get(targetId);
+    if (!from) throw new ProtocolError('BOT_NOT_FOUND', `Source agent not found: ${fromAgentId}`);
+    if (!target) throw new ProtocolError('BOT_NOT_FOUND', `Target agent not found: ${targetId}`);
+    const text = requireString(command.text, 'agent.text', { max: 120_000 });
+    const message = {
+      id: `peer-${randomUUID()}`,
+      fromAgentId,
+      fromAgentName: from.name,
+      targetId,
+      targetName: target.name,
+      text,
+      priority: Boolean(command.priority),
+      createdAtMs: Date.now(),
+    };
+    await this.store.update((state) => {
+      appendPeerMessage(state, ownerId, message);
+      this.#appendEvent(state, ownerId, null, `mahayana-ai:agent:${targetId}`, { type: 'agent.peerMessage', timestamp: nowIso(), message });
+    });
+    return await this.#acceptBackgroundTurn(ownerId, {
+      requestId: command.requestId,
+      agentId: targetId,
+      agentName: target.name,
+      text: `Message from ${from.name}: ${text}`,
+      source: `agent:${fromAgentId}`,
+      peerReplyTo: { id: fromAgentId, name: from.name },
+    });
+  }
+
+  async #broadcastAgents(ownerId, command) {
+    const bots = await this.#botIndex(ownerId);
+    const requested = Array.isArray(command.targetIds) ? command.targetIds.map((id) => requireString(id, 'targetId', { max: 256 })) : [...bots.keys()];
+    const targetIds = [...new Set(requested)].filter((id) => bots.has(id)).slice(0, 32);
+    const message = requireString(command.message, 'broadcast.message', { max: 120_000 });
+    let scheduled = 0;
+    for (const targetId of targetIds) {
+      const target = bots.get(targetId);
+      const result = await this.#acceptBackgroundTurn(ownerId, {
+        requestId: `${command.requestId}:broadcast:${targetId}`,
+        agentId: targetId,
+        agentName: target.name,
+        text: `Broadcast from user: ${message}`,
+        source: 'broadcast:user',
+      });
+      if (!result.deduplicated) scheduled += 1;
+    }
+    const result = { total: targetIds.length, scheduled };
+    await this.store.update((state) => {
+      this.#appendEvent(state, ownerId, null, DEFAULT_CONVERSATION_ID, { type: 'agent.broadcasted', timestamp: nowIso(), result });
+    });
+    return { requestId: command.requestId };
+  }
+
+  async #peerHistory(ownerId, command) {
+    const agentId = requireString(command.agentId, 'agentId', { max: 256 });
+    const limit = Number.isSafeInteger(command.limit) ? Math.min(Math.max(command.limit, 1), 300) : 100;
+    const state = await this.store.read();
+    const messages = ownerPeerMessages(state, ownerId, false)
+      .filter((message) => message.fromAgentId === agentId || message.targetId === agentId)
+      .slice(-limit);
+    return await this.#emit(ownerId, command, { type: 'agent.peerHistory', agentId, messages });
+  }
+
+  async #sendGroup(ownerId, command) {
+    const groupId = requireString(command.id, 'group.id', { max: 256 });
+    const text = requireString(command.text, 'group.text', { max: 120_000 });
+    let group = await this.productRequest(ownerId, 'state.group.get', { id: groupId });
+    group = await this.productRequest(ownerId, 'state.group.appendMessage', { id: groupId, speaker: { kind: 'user' }, content: text });
+    await this.store.update((state) => {
+      this.#appendEvent(state, ownerId, null, DEFAULT_CONVERSATION_ID, { type: 'group.changed', timestamp: nowIso(), action: 'message', group });
+    });
+    const bots = await this.#botIndex(ownerId);
+    for (const memberId of group.memberIds.slice(0, 16)) {
+      const bot = bots.get(memberId);
+      if (!bot) {
+        await this.store.update((state) => {
+          this.#appendEvent(state, ownerId, null, DEFAULT_CONVERSATION_ID, { type: 'group.changed', timestamp: nowIso(), action: `turnFailed:${memberId}`, group });
+        });
+        continue;
+      }
+      await this.#acceptBackgroundTurn(ownerId, {
+        requestId: `${command.requestId}:group:${memberId}`,
+        agentId: memberId,
+        agentName: bot.name,
+        text: `Group "${group.name}" message from user: ${text}`,
+        source: `group:${groupId}`,
+        groupId,
+      });
+    }
+    return { requestId: command.requestId };
+  }
+
   async #executeRun(runId) {
     if (this.executing.has(runId)) return;
     this.executing.add(runId);
@@ -209,6 +366,7 @@ export class MahayanaCoordinatorService {
       }
       if (pending.trim()) { hostIndex += 1; await this.#acceptHostEvent(runId, hostIndex, JSON.parse(pending)); }
     } catch (error) {
+      let groupFailure = null;
       await this.store.update((state) => {
         const run = state.runs[runId];
         if (!run || TERMINAL_RUN_STATES.has(run.state) || run.cancelled) return;
@@ -216,11 +374,27 @@ export class MahayanaCoordinatorService {
         run.error = errorEnvelope(error);
         run.updatedAt = nowIso();
         run.completedAt = nowIso();
-        this.#appendEvent(state, run.ownerId, run.runId, run.conversationId, { type: 'operation.failed', operationId: run.runId, code: run.error.code, message: run.error.message, timestamp: nowIso() });
+        if (run.background) {
+          this.#appendEvent(state, run.ownerId, run.runId, run.conversationId, {
+            type: 'agent.backgroundFinished',
+            timestamp: nowIso(),
+            agentId: run.agentId,
+            agentName: run.background.agentName,
+            operationId: run.runId,
+            source: run.background.source,
+            error: run.error.message,
+          });
+          if (run.background.groupId) groupFailure = { ownerId: run.ownerId, groupId: run.background.groupId, memberId: run.agentId };
+        } else {
+          this.#appendEvent(state, run.ownerId, run.runId, run.conversationId, { type: 'operation.failed', operationId: run.runId, code: run.error.code, message: run.error.message, timestamp: nowIso() });
+        }
       });
+      if (groupFailure) await this.#emitGroupFailure(groupFailure.ownerId, groupFailure.groupId, groupFailure.memberId);
     } finally { this.executing.delete(runId); }
   }
   async #acceptHostEvent(runId, hostIndex, event) {
+    let groupMessage = null;
+    let groupFailure = null;
     await this.store.update((state) => {
       const run = state.runs[runId];
       if (!run || run.cancelled || TERMINAL_RUN_STATES.has(run.state)) return;
@@ -240,9 +414,121 @@ export class MahayanaCoordinatorService {
           }
         }
       }
-      this.#appendEvent(state, run.ownerId, run.runId, run.conversationId, event);
+
+      const background = run.background;
+      if (!background) {
+        this.#appendEvent(state, run.ownerId, run.runId, run.conversationId, event);
+        return;
+      }
+
+      if (event.type === 'chat.delta') {
+        this.#appendEvent(state, run.ownerId, run.runId, run.conversationId, {
+          type: 'agent.backgroundDelta',
+          timestamp: event.timestamp || nowIso(),
+          agentId: run.agentId,
+          agentName: background.agentName,
+          operationId: run.runId,
+          source: background.source,
+          delta: String(event.delta || ''),
+        });
+        if (background.groupId) {
+          this.#appendEvent(state, run.ownerId, run.runId, run.conversationId, {
+            type: 'group.delta',
+            timestamp: event.timestamp || nowIso(),
+            groupId: background.groupId,
+            memberId: run.agentId,
+            memberName: background.agentName,
+            operationId: run.runId,
+            delta: String(event.delta || ''),
+          });
+        }
+        return;
+      }
+
+      if (event.type === 'chat.message' && event.role === 'assistant') {
+        const text = String(event.text || '');
+        this.#appendEvent(state, run.ownerId, run.runId, run.conversationId, {
+          type: 'agent.backgroundMessage',
+          timestamp: event.timestamp || nowIso(),
+          agentId: run.agentId,
+          agentName: background.agentName,
+          operationId: run.runId,
+          source: background.source,
+          text,
+        });
+        if (background.peerReplyTo) {
+          const reply = {
+            id: `peer-${randomUUID()}`,
+            fromAgentId: run.agentId,
+            fromAgentName: background.agentName,
+            targetId: background.peerReplyTo.id,
+            targetName: background.peerReplyTo.name,
+            text,
+            priority: false,
+            createdAtMs: Date.now(),
+          };
+          appendPeerMessage(state, run.ownerId, reply);
+          this.#appendEvent(state, run.ownerId, run.runId, run.conversationId, { type: 'agent.peerMessage', timestamp: nowIso(), message: reply });
+        }
+        if (background.groupId) groupMessage = { ownerId: run.ownerId, groupId: background.groupId, memberId: run.agentId, memberName: background.agentName, text };
+        return;
+      }
+
+      if (event.type === 'operation.completed') {
+        this.#appendEvent(state, run.ownerId, run.runId, run.conversationId, {
+          type: 'agent.backgroundFinished',
+          timestamp: event.timestamp || nowIso(),
+          agentId: run.agentId,
+          agentName: background.agentName,
+          operationId: run.runId,
+          source: background.source,
+        });
+        return;
+      }
+
+      if (event.type === 'operation.failed') {
+        this.#appendEvent(state, run.ownerId, run.runId, run.conversationId, {
+          type: 'agent.backgroundFinished',
+          timestamp: event.timestamp || nowIso(),
+          agentId: run.agentId,
+          agentName: background.agentName,
+          operationId: run.runId,
+          source: background.source,
+          error: String(event.message || 'Agent background run failed'),
+        });
+        if (background.groupId) groupFailure = { ownerId: run.ownerId, groupId: background.groupId, memberId: run.agentId };
+        return;
+      }
+
+      if (event.type !== 'operation.started' && !(event.type === 'chat.message' && event.role === 'user')) {
+        this.#appendEvent(state, run.ownerId, run.runId, run.conversationId, event);
+      }
     });
+
+    if (groupMessage) {
+      const group = await this.productRequest(groupMessage.ownerId, 'state.group.appendMessage', {
+        id: groupMessage.groupId,
+        speaker: { kind: 'member', id: groupMessage.memberId, name: groupMessage.memberName },
+        content: groupMessage.text,
+      });
+      await this.store.update((state) => {
+        this.#appendEvent(state, groupMessage.ownerId, runId, DEFAULT_CONVERSATION_ID, { type: 'group.changed', timestamp: nowIso(), action: 'message', group });
+      });
+    }
+    if (groupFailure) await this.#emitGroupFailure(groupFailure.ownerId, groupFailure.groupId, groupFailure.memberId);
   }
+
+  async #emitGroupFailure(ownerId, groupId, memberId) {
+    try {
+      const group = await this.productRequest(ownerId, 'state.group.get', { id: groupId });
+      await this.store.update((state) => {
+        this.#appendEvent(state, ownerId, null, DEFAULT_CONVERSATION_ID, { type: 'group.changed', timestamp: nowIso(), action: `turnFailed:${memberId}`, group });
+      });
+    } catch {
+      // The group may have been deleted while the background run was active.
+    }
+  }
+
   async productRequest(ownerId, method, args = {}) {
     const response = await fetch(`${this.hostUrl}/v1/product`, {
       method: 'POST',
@@ -355,7 +641,19 @@ export class MahayanaCoordinatorService {
       run.state = 'cancelled';
       run.updatedAt = nowIso();
       run.completedAt = nowIso();
-      this.#appendEvent(state, ownerId, runId, run.conversationId, { type: 'operation.interrupted', operationId: runId, timestamp: nowIso() });
+      if (run.background) {
+        this.#appendEvent(state, ownerId, runId, run.conversationId, {
+          type: 'agent.backgroundFinished',
+          timestamp: nowIso(),
+          agentId: run.agentId,
+          agentName: run.background.agentName,
+          operationId: runId,
+          source: run.background.source,
+          error: 'cancelled',
+        });
+      } else {
+        this.#appendEvent(state, ownerId, runId, run.conversationId, { type: 'operation.interrupted', operationId: runId, timestamp: nowIso() });
+      }
     });
     if (!found) throw new ProtocolError('NOT_FOUND', 'Run not found');
     return { operationId: runId, state: 'cancelled' };

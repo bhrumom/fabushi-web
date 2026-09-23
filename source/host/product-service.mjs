@@ -180,6 +180,7 @@ export class HostProductService {
   async invoke(ownerId, method, args = {}) {
     requireString(ownerId, "ownerId", { max: 256 });
     if (method.startsWith("remote.")) return await this.remoteComputer.invoke(ownerId, method, args);
+    if (method.startsWith("state.")) return await this.stateful.invoke(ownerId, method, args);
     switch (method) {
       case "marketplace.browse": return await this.marketplaceBrowse(args.query);
       case "marketplace.release": return await this.marketplaceRelease(args.pluginId, args.version);
