@@ -51,6 +51,7 @@ interface TranscriptCardViewProps {
   onResolveDraft: (draft: MessageDraft, action: "send" | "discard") => void;
   onProvideSecret: (requestId: string, value: string) => void;
   onConnectListener: (platform: ListenerPlatform) => void;
+  onOpenMiniApp: (card: Extract<TranscriptCard, { kind: "miniApp" }>) => void;
 }
 
 const listenerCopy: Record<ListenerPlatform, [string, string]> = {
@@ -702,9 +703,8 @@ function PdfCard({ card }: { card: Extract<TranscriptCard, { kind: "pdf" }> }) {
 }
 
 
-function MiniAppCard({ card }: { card: Extract<TranscriptCard, { kind: "miniApp" }> }) {
-  const canOpen = typeof window !== "undefined" && typeof window.fabushi?.registerMiniAppDocument === "function";
-  return <article className={styles.documentCard} data-testid="transcript-miniapp-card"><header><AppWindow size={17} /><strong>{card.name}</strong><span>Mini App</span></header><p>{card.description || "Runnable Fabushi Mini App artifact."}</p>{canOpen ? <footer className={styles.cardActions}><button className={styles.primaryCardButton} type="button" onClick={() => window.dispatchEvent(new CustomEvent("fabushi:open-generated-miniapp", { detail: card }))}><AppWindow size={15} /> 打开小程序</button></footer> : <p className={styles.cardDescription}>请在 Fabushi 桌面或移动应用中打开此产物。</p>}</article>;
+function MiniAppCard({ card, onOpen }: { card: Extract<TranscriptCard, { kind: "miniApp" }>; onOpen: (card: Extract<TranscriptCard, { kind: "miniApp" }>) => void }) {
+  return <article className={styles.documentCard} data-testid="transcript-miniapp-card"><header><AppWindow size={17} /><strong>{card.name}</strong><span>Mini App</span></header><p>{card.description || "Runnable Fabushi Mini App artifact."}</p><footer className={styles.cardActions}><button className={styles.primaryCardButton} type="button" onClick={() => onOpen(card)}><AppWindow size={15} /> 打开小程序</button></footer></article>;
 }
 
 function SpreadsheetCard({ card }: { card: Extract<TranscriptCard, { kind: "spreadsheet" }> }) {
@@ -713,7 +713,7 @@ function SpreadsheetCard({ card }: { card: Extract<TranscriptCard, { kind: "spre
   return <article className={styles.documentCard}><header><FileSpreadsheet size={17} /><strong>{card.name}</strong><span>{card.sheets.length} sheet{card.sheets.length === 1 ? "" : "s"}</span></header><nav className={styles.sheetTabs}>{card.sheets.map((item, index) => <button className={index === active ? styles.sheetTabActive : undefined} type="button" key={item.name} onClick={() => setActive(index)}>{item.name}</button>)}</nav>{sheet ? <div className={styles.sheetTableWrap}><table className={styles.sheetTable}><tbody>{sheet.rows.slice(0, 200).map((row, rowIndex) => <tr key={rowIndex}>{row.slice(0, 100).map((cell, cellIndex) => rowIndex === 0 ? <th key={cellIndex}>{cell}</th> : <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody></table></div> : <p>No spreadsheet rows.</p>}</article>;
 }
 
-export function TranscriptCardView({ entry, onResolveDraft, onProvideSecret, onConnectListener }: TranscriptCardViewProps) {
+export function TranscriptCardView({ entry, onResolveDraft, onProvideSecret, onConnectListener, onOpenMiniApp }: TranscriptCardViewProps) {
   const card = entry.card;
   if (card.kind === "emailDraft" && card.draft.kind === "email") return <EmailDraftCard draft={card.draft} onResolve={onResolveDraft} />;
   if (card.kind === "slackDraft" && card.draft.kind === "slack") return <SlackDraftCard draft={card.draft} onResolve={onResolveDraft} />;
@@ -722,6 +722,6 @@ export function TranscriptCardView({ entry, onResolveDraft, onProvideSecret, onC
   if (card.kind === "event") return <EventResultCard card={card} />;
   if (card.kind === "pdf") return <PdfCard card={card} />;
   if (card.kind === "spreadsheet") return <SpreadsheetCard card={card} />;
-  if (card.kind === "miniApp") return <MiniAppCard card={card} />;
+  if (card.kind === "miniApp") return <MiniAppCard card={card} onOpen={onOpenMiniApp} />;
   return null;
 }
