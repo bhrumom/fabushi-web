@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: frontend/apps/web
+        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -47,5 +47,5 @@ jobs:
           cache: pnpm
           cache-dependency-path: frontend/apps/web/pnpm-lock.yaml
       - run: pnpm install --no-frozen-lockfile
-      - run: pnpm run typecheck:host
-      - run: pnpm run build
+      - run: pnpm --filter @fabushi/web run typecheck:host
+      - run: pnpm --filter @fabushi/web run build
