@@ -5,6 +5,7 @@ import { gunzipSync } from "node:zlib";
 import { AtomicJsonStore } from "../shared/atomic-json-store.mjs";
 import { ProtocolError, asRecord, nowIso, requireString } from "../shared/protocol.mjs";
 import { McpClientPool } from "./mcp-client.mjs";
+import { RemoteComputerService } from "./remote-computer-service.mjs";
 
 const MAX_ARTIFACT_BYTES = 32 * 1024 * 1024;
 const MAX_UI_BYTES = 2 * 1024 * 1024;
@@ -168,11 +169,13 @@ export class HostProductService {
     this.installRoot = path.join(dataDir, "plugins");
     this.store = new AtomicJsonStore(path.join(dataDir, "product-state.json"), initialProductState);
     this.mcp = new McpClientPool();
+    this.remoteComputer = new RemoteComputerService({ dataDir, platformApiBase });
     this.platformApiBase = platformApiBase.replace(/\/$/, "");
   }
 
   async invoke(ownerId, method, args = {}) {
     requireString(ownerId, "ownerId", { max: 256 });
+    if (method.startsWith("remote.")) return await this.remoteComputer.invoke(ownerId, method, args);
     switch (method) {
       case "marketplace.browse": return await this.marketplaceBrowse(args.query);
       case "marketplace.release": return await this.marketplaceRelease(args.pluginId, args.version);

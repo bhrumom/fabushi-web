@@ -61,6 +61,18 @@ const server = http.createServer(async (req, res) => {
       if (!originAllowed(req.headers.origin)) throw new ProtocolError('ORIGIN_DENIED', 'Origin is not allowed');
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'set-cookie': 'fabushi_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0' + (process.env.NODE_ENV === 'production' ? '; Secure' : '') }); res.end(JSON.stringify({ ok: true })); return;
     }
+    if (req.method === 'POST' && req.url === '/v1/remote') {
+      if (!originAllowed(req.headers.origin)) throw new ProtocolError('ORIGIN_DENIED', 'Origin is not allowed');
+      const session = sessionFromRequest(req, sessionSecret);
+      if (!session) throw new ProtocolError('UNAUTHORIZED', 'Authenticated session cookie is required');
+      const body = await readJson(req);
+      const method = typeof body?.method === 'string' ? body.method.trim() : '';
+      if (!/^remote\.[A-Za-z][A-Za-z0-9]*$/.test(method)) throw new ProtocolError('METHOD_NOT_FOUND', 'Remote Computer method is invalid');
+      const result = await coordinatorRequest(session.sub, 'product.request', { method, args: body?.args || {} });
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify({ ok: true, result }));
+      return;
+    }
     res.writeHead(404, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Not found' } }));
   } catch (error) {
     const failure = errorEnvelope(error); const status = failure.code === 'UNAUTHORIZED' ? 401 : failure.code === 'ORIGIN_DENIED' ? 403 : 400;
