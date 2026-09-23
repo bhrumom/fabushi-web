@@ -10,6 +10,7 @@ type ActiveRunSnapshot = {
   operationId?: unknown;
   state?: unknown;
   currentStep?: unknown;
+  background?: unknown;
 };
 type ServerEnvelope =
   | { protocolVersion: 1; kind: "lifecycle"; type: "ready" | "shutdown"; highWaterMark?: number; activeRuns?: unknown[] }
@@ -27,7 +28,7 @@ function webHttpBase(wsUrl: string): string { const url = new URL(wsUrl); url.pr
 function asRecord(value: unknown): Record<string, unknown> | null { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null; }
 function activeRunEvents(value: unknown): RuntimeEvent[] {
   const run = asRecord(value) as ActiveRunSnapshot | null;
-  if (!run) return [];
+  if (!run || run.background === true) return [];
   const operationId = typeof run.operationId === "string" && run.operationId ? run.operationId : typeof run.runId === "string" && run.runId ? run.runId : "";
   if (!operationId) return [];
   const step = asRecord(run.currentStep);
