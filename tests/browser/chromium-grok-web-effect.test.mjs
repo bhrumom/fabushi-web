@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,6 +26,66 @@ function start(command, args, { cwd = root, env = {} } = {}) {
 function terminate(child) {
   if (!child || child.exitCode !== null || child.signalCode) return;
   try { child.kill("SIGTERM"); } catch {}
+}
+
+function contentType(file) {
+  const extension = path.extname(file).toLowerCase();
+  if (extension === ".html") return "text/html; charset=utf-8";
+  if (extension === ".js") return "text/javascript; charset=utf-8";
+  if (extension === ".css") return "text/css; charset=utf-8";
+  if (extension === ".json" || extension === ".webmanifest") return "application/json; charset=utf-8";
+  if (extension === ".svg") return "image/svg+xml";
+  if (extension === ".png") return "image/png";
+  if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
+  if (extension === ".woff2") return "font/woff2";
+  return "application/octet-stream";
+}
+
+async function resolveStaticFile(rootDir, pathname) {
+  const decoded = decodeURIComponent(pathname.split("?")[0]);
+  const relative = decoded.replace(/^\/+/, "");
+  const candidates = [];
+  if (!relative) candidates.push("index.html");
+  else {
+    candidates.push(relative);
+    if (!path.extname(relative)) {
+      candidates.push(`${relative}.html`);
+      candidates.push(path.join(relative, "index.html"));
+    }
+  }
+  for (const candidate of candidates) {
+    const full = path.resolve(rootDir, candidate);
+    if (!full.startsWith(path.resolve(rootDir) + path.sep) && full !== path.resolve(rootDir)) continue;
+    try {
+      const info = await stat(full);
+      if (info.isFile()) return full;
+    } catch {}
+  }
+  return null;
+}
+
+async function startStaticExportServer(rootDir, port) {
+  const server = http.createServer(async (req, res) => {
+    try {
+      const file = await resolveStaticFile(rootDir, new URL(req.url || "/", "http://static.local").pathname);
+      if (!file) {
+        res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+        res.end("Not found");
+        return;
+      }
+      const bytes = await readFile(file);
+      res.writeHead(200, { "content-type": contentType(file), "cache-control": "no-store" });
+      res.end(bytes);
+    } catch (error) {
+      res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+      res.end(error instanceof Error ? error.message : String(error));
+    }
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", resolve);
+  });
+  return server;
 }
 
 async function waitHttp(url, { timeoutMs = 30_000, expectedStatus } = {}) {
@@ -222,8 +283,9 @@ test("real Chromium reload restores the same durable tool-running run and comple
     waitHttp(`http://127.0.0.1:${ports.web}/healthz`),
   ]);
 
-  children.push(start("pnpm", ["--dir", "frontend", "--filter", "@fabushi/web", "exec", "next", "start", "-H", "127.0.0.1", "-p", String(ports.next)]));
-  await waitHttp(`${origin}/host`, { timeoutMs: 30_000 });
+  const staticServer = await startStaticExportServer(path.join(root, "frontend", "apps", "web", "out"), ports.next);
+  t.after(() => new Promise((resolve) => staticServer.close(resolve)));
+  await waitHttp(`${origin}/host`, { timeoutMs: 10_000 });
 
   const sessionValue = await authenticate();
   const chrome = resolveChrome();
