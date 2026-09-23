@@ -75,8 +75,39 @@ function eventRunState(event, current) {
     if (event.kind === 'thinking') return 'thinking';
     if (event.kind === 'tool') return 'tool-running';
     if (event.kind === 'streaming') return 'streaming';
+    if (event.kind === 'recovering') return 'recovering';
   }
   return current;
+}
+function hostEventSequence(event, fallback) {
+  return Number.isSafeInteger(event?.hostSeq) && event.hostSeq > 0 ? event.hostSeq : fallback;
+}
+function hostProtocolError(value, fallbackMessage = 'Host turn failed') {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || !value.error || value.type) return null;
+  const failure = value.error && typeof value.error === 'object' && !Array.isArray(value.error) ? value.error : {};
+  return new ProtocolError(
+    typeof failure.code === 'string' && failure.code ? failure.code : 'HOST_FAILED',
+    typeof failure.message === 'string' && failure.message ? failure.message : fallbackMessage,
+    failure.details,
+  );
+}
+function recoverableHostError(error) {
+  if (!error || error.name === 'AbortError' || error.code === 'ABORT_ERR') return false;
+  const code = typeof error.code === 'string' ? error.code : '';
+  if (['STALE_GENERATION','INVALID_ARGUMENT','UNAUTHORIZED','OWNER_REQUIRED','PAYLOAD_TOO_LARGE','RUN_MISMATCH'].includes(code)) return false;
+  return code.startsWith('HOST_') || code === 'ECONNRESET' || code === 'ECONNREFUSED' || code === 'UND_ERR_SOCKET' || error instanceof TypeError;
+}
+async function delayWithSignal(ms, signal) {
+  if (signal?.aborted) throw Object.assign(new Error('Run aborted'), { name: 'AbortError' });
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    const abort = () => {
+      clearTimeout(timer);
+      reject(Object.assign(new Error('Run aborted'), { name: 'AbortError' }));
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+  });
 }
 
 export class MahayanaCoordinatorService {
@@ -345,30 +376,90 @@ export class MahayanaCoordinatorService {
     this.executing.add(runId);
     const controller = new AbortController();
     this.abortControllers.set(runId, controller);
+    let recoveryNotified = false;
     try {
-      const snapshot = await this.store.read();
-      const run = snapshot.runs[runId];
-      if (!run || TERMINAL_RUN_STATES.has(run.state) || run.cancelled) return;
-      const response = await fetch(`${this.hostUrl}/v1/turn`, { method: 'POST', headers: { 'content-type': 'application/json', ...(this.internalToken ? { authorization: `Bearer ${this.internalToken}` } : {}) }, body: JSON.stringify({ runId: run.runId, executionKey: run.executionKey, ownerId: run.ownerId, conversationId: run.conversationId, agentId: run.agentId, text: run.text, model: run.model }), signal: controller.signal });
-      if (!response.ok || !response.body) throw new ProtocolError('HOST_UNAVAILABLE', `Host returned HTTP ${response.status}`);
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let pending = '';
-      let hostIndex = 0;
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        pending += decoder.decode(value, { stream: true });
-        let newline;
-        while ((newline = pending.indexOf('\n')) >= 0) {
-          const line = pending.slice(0, newline).trim();
-          pending = pending.slice(newline + 1);
-          if (!line) continue;
-          hostIndex += 1;
-          await this.#acceptHostEvent(runId, hostIndex, JSON.parse(line));
+      const maxAttempts = Math.max(1, Number(process.env.FABUSHI_HOST_RECOVERY_ATTEMPTS || 10));
+      let lastError = null;
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const snapshot = await this.store.read();
+        const run = snapshot.runs[runId];
+        if (!run || TERMINAL_RUN_STATES.has(run.state) || run.cancelled) return;
+        if (controller.signal.aborted) return;
+        try {
+          const response = await fetch(`${this.hostUrl}/v1/turn`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', ...(this.internalToken ? { authorization: `Bearer ${this.internalToken}` } : {}) },
+            body: JSON.stringify({ runId: run.runId, executionKey: run.executionKey, ownerId: run.ownerId, conversationId: run.conversationId, agentId: run.agentId, text: run.text, model: run.model }),
+            signal: controller.signal,
+          });
+          if (!response.ok || !response.body) {
+            const body = await response.json().catch(() => ({}));
+            const failure = body?.error || {};
+            const error = new ProtocolError(
+              typeof failure.code === 'string' && failure.code ? failure.code : 'HOST_UNAVAILABLE',
+              typeof failure.message === 'string' && failure.message ? failure.message : `Host returned HTTP ${response.status}`,
+              failure.details,
+            );
+            if (response.status >= 500 || [408,425,429].includes(response.status)) error.code = error.code || 'HOST_UNAVAILABLE';
+            throw error;
+          }
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let pending = '';
+          let fallbackIndex = 0;
+          const acceptLine = async (line) => {
+            if (!line) return;
+            const event = JSON.parse(line);
+            const protocolError = hostProtocolError(event);
+            if (protocolError) throw protocolError;
+            fallbackIndex += 1;
+            await this.#acceptHostEvent(runId, hostEventSequence(event, fallbackIndex), event);
+          };
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            pending += decoder.decode(value, { stream: true });
+            let newline;
+            while ((newline = pending.indexOf('\n')) >= 0) {
+              const line = pending.slice(0, newline).trim();
+              pending = pending.slice(newline + 1);
+              await acceptLine(line);
+            }
+          }
+          if (pending.trim()) await acceptLine(pending.trim());
+
+          const after = await this.store.read();
+          const settled = after.runs[runId];
+          if (!settled || TERMINAL_RUN_STATES.has(settled.state) || settled.cancelled) return;
+          throw new ProtocolError('HOST_STREAM_INCOMPLETE', 'Host stream ended before the durable run reached a terminal state');
+        } catch (error) {
+          if (controller.signal.aborted) return;
+          lastError = error;
+          if (!recoverableHostError(error) || attempt === maxAttempts) throw error;
+          if (!recoveryNotified) {
+            recoveryNotified = true;
+            await this.store.update((state) => {
+              const target = state.runs[runId];
+              if (!target || TERMINAL_RUN_STATES.has(target.state) || target.cancelled) return;
+              target.state = 'recovering';
+              target.updatedAt = nowIso();
+              target.currentStep = { stepId: 'recovering-host', kind: 'recovering', title: 'Recovering Host connection', status: 'running' };
+              this.#appendEvent(state, target.ownerId, target.runId, target.conversationId, {
+                type: 'agent.step',
+                operationId: target.runId,
+                stepId: 'recovering-host',
+                kind: 'recovering',
+                title: 'Recovering Host connection',
+                detail: error instanceof Error ? error.message : String(error),
+                status: 'running',
+                timestamp: nowIso(),
+              });
+            });
+          }
+          await delayWithSignal(Math.min(1500, 100 * 2 ** (attempt - 1)), controller.signal);
         }
       }
-      if (pending.trim()) { hostIndex += 1; await this.#acceptHostEvent(runId, hostIndex, JSON.parse(pending)); }
+      if (lastError) throw lastError;
     } catch (error) {
       let groupFailure = null;
       await this.store.update((state) => {
@@ -378,6 +469,7 @@ export class MahayanaCoordinatorService {
         run.error = errorEnvelope(error);
         run.updatedAt = nowIso();
         run.completedAt = nowIso();
+        delete run.currentStep;
         if (run.background) {
           this.#appendEvent(state, run.ownerId, run.runId, run.conversationId, {
             type: 'agent.backgroundFinished',
