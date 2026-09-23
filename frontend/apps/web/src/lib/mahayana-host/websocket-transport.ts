@@ -5,6 +5,12 @@ const PROTOCOL_VERSION = 1;
 const MAX_RECONNECT_DELAY_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 30_000;
 type PendingRequest = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> };
+type ActiveRunSnapshot = {
+  runId?: unknown;
+  operationId?: unknown;
+  state?: unknown;
+  currentStep?: unknown;
+};
 type ServerEnvelope =
   | { protocolVersion: 1; kind: "lifecycle"; type: "ready" | "shutdown"; highWaterMark?: number; activeRuns?: unknown[] }
   | { protocolVersion: 1; kind: "reply"; requestId: string; ok: true; result: unknown }
@@ -18,6 +24,25 @@ function configuredGatewayUrl(): string | null {
 }
 export function isWebSocketMahayanaHostConfigured(): boolean { return configuredGatewayUrl() !== null; }
 function webHttpBase(wsUrl: string): string { const url = new URL(wsUrl); url.protocol = url.protocol === "wss:" ? "https:" : "http:"; url.pathname = "/"; url.search = ""; url.hash = ""; return url.toString().replace(/\/$/, ""); }
+function asRecord(value: unknown): Record<string, unknown> | null { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null; }
+function activeRunEvents(value: unknown): RuntimeEvent[] {
+  const run = asRecord(value) as ActiveRunSnapshot | null;
+  if (!run) return [];
+  const operationId = typeof run.operationId === "string" && run.operationId ? run.operationId : typeof run.runId === "string" && run.runId ? run.runId : "";
+  if (!operationId) return [];
+  const step = asRecord(run.currentStep);
+  const state = typeof run.state === "string" ? run.state : "running";
+  const fallbackKind = state === "tool-running" ? "tool" : state === "streaming" ? "streaming" : state === "preparing" ? "preparing" : state === "recovering" ? "recovering" : "thinking";
+  const kind = typeof step?.kind === "string" && step.kind ? step.kind : fallbackKind;
+  const stepId = typeof step?.stepId === "string" && step.stepId ? step.stepId : `restored:${state}`;
+  const title = typeof step?.title === "string" && step.title ? step.title : state === "tool-running" ? "Tool running" : state === "streaming" ? "Streaming" : state === "recovering" ? "Recovering durable run" : "Resuming agent run";
+  const detail = typeof step?.detail === "string" && step.detail ? step.detail : undefined;
+  const timestamp = new Date().toISOString();
+  return [
+    { type: "operation.started", timestamp, operationId, label: title, interruptible: true, restored: true },
+    { type: "agent.step", timestamp, operationId, stepId, kind, title, ...(detail ? { detail } : {}), status: "running" },
+  ];
+}
 
 export class WebSocketMahayanaHostTransport implements MahayanaHostTransport {
   private readonly listeners = new Set<RuntimeEventListener>();
@@ -82,7 +107,12 @@ export class WebSocketMahayanaHostTransport implements MahayanaHostTransport {
       socket.addEventListener("message", (event) => {
         try {
           const envelope = JSON.parse(String(event.data)) as ServerEnvelope; if (envelope.protocolVersion !== PROTOCOL_VERSION) throw new Error("Mahayana protocol version mismatch");
-          if (envelope.kind === "lifecycle" && envelope.type === "ready") { this.reconnectAttempt = 0; if (!settled) { settled = true; resolve(); } return; }
+          if (envelope.kind === "lifecycle" && envelope.type === "ready") {
+            this.reconnectAttempt = 0;
+            for (const run of envelope.activeRuns ?? []) for (const restored of activeRunEvents(run)) this.emit(restored);
+            if (!settled) { settled = true; resolve(); }
+            return;
+          }
           if (envelope.kind === "reply") { const pending = this.pending.get(envelope.requestId); if (!pending) return; this.pending.delete(envelope.requestId); clearTimeout(pending.timer); if (envelope.ok) pending.resolve(envelope.result); else pending.reject(new Error(envelope.error?.message || envelope.error?.code || "Mahayana request failed")); return; }
           if (envelope.kind === "event") { if (!Number.isSafeInteger(envelope.seq) || envelope.seq <= this.lastSeq) return; this.lastSeq = envelope.seq; this.writeCursor(this.lastSeq); this.emit(envelope.event); }
         } catch (error) { if (!settled) { settled = true; reject(error instanceof Error ? error : new Error(String(error))); } }
