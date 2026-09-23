@@ -2,7 +2,7 @@
 
 Status: active  
 Owner: Fabushi Web  
-Last updated: 2026-09-22  
+Last updated: 2026-09-23  
 Related issue/task/PR: Grok Bot 0.18 → Fabushi Web architecture and behavior parity  
 Target repository: `bhrumom/fabushi-web`  
 Target baseline: `c481dea9e2624a4903fe68e22e22760a47ef7727`  
@@ -30,9 +30,13 @@ The pinned Grok reference contains 2,111 repository files at the selected baseli
 | `source/internal/**` | 2 |
 | remaining `source/**` support files | 2 |
 
-Fabushi Web must account for every reference file and migrate every product-relevant code module one by one. Directory-level statements such as "frontend migrated" or "host equivalent exists" are not sufficient evidence.
+Fabushi Web must account for every reference file one by one, but **per-file accounting does not mean mechanical 1:1 file copying**. Every product-relevant responsibility represented by the reference must be implemented as a real Web equivalent. A reference file may map to one or more new target files, to an already-existing Fabushi Web implementation that demonstrably owns the same responsibility, or to an evidenced Web-specific `not-applicable` disposition when the source mechanism is intrinsically desktop-only. Directory-level statements such as "frontend migrated" or "host equivalent exists" are not sufficient evidence.
+
+The canonical migration rule is therefore: **per-file audit and disposition + per-product-responsibility Web implementation**. The Fabushi Web target tree does not need to contain exactly 2,111 corresponding files, and creating no-op/shim files only to mirror the source tree is explicitly incorrect.
 
 The resulting product should behave like a first-class web counterpart to the Grok Bot desktop application in the same sense that Telegram Web is a first-class counterpart to Telegram Desktop: the browser is the user-facing client, while durable agent/coordinator/host/runner state and execution can continue in server or paired-device runtimes.
+
+The ultimate parity test is the **Grok Bot Web effect**: in a normal browser, except for capabilities that the browser security model genuinely cannot own directly, a user must receive the same core Agent experience, lifecycle, tool behavior, remote-computer behavior, and recovery semantics as Grok Bot 0.18. Platform differences must be explicit Web adaptations, not silent product shrinkage.
 
 ## 2. Goal
 
@@ -40,7 +44,7 @@ Build Fabushi Web as a Grok-shaped web application with the following properties
 
 1. The user-visible shell, conversations, transcripts, composer, agents, settings, plugins/MCP, tools, reactions, status surfaces, remote-computer surfaces, and real-time behaviors reach functional parity with the pinned Grok Bot 0.18 reference wherever those behaviors make sense on the web.
 2. Grok's architecture is preserved as explicit runtime boundaries rather than collapsed into a monolithic Next.js process.
-3. Every Grok code file is individually accounted for in a machine-readable parity ledger and receives a real Fabushi Web target implementation, an evidenced equivalent, or an evidenced Web-specific not-applicable disposition.
+3. Every Grok source file is individually audited and accounted for in a machine-readable parity ledger, while every product-relevant responsibility represented by those files receives a real Fabushi Web implementation or a demonstrably equivalent existing implementation. Desktop-only implementation mechanisms may be `not-applicable` only with an evidenced Web rationale and, where the user-facing effect still matters, an explicit Web replacement behavior.
 4. Desktop transport is translated rather than bypassed:
    - Electron IPC becomes typed HTTPS/RPC and WebSocket transport.
    - Electron preload becomes a thin browser-safe Web preload/platform bridge.
@@ -61,6 +65,8 @@ Build Fabushi Web as a Grok-shaped web application with the following properties
 7. Do not weaken browser security boundaries to simulate desktop-only privileges.
 8. Do not claim a desktop-only feature is "migrated" when the web implementation merely hides the UI.
 9. Do not require local-computer privileges from a normal browser page. Local-computer control, when required, must use an explicitly paired local companion/runner with user-visible permission and revocation.
+10. Do not create one target file for every source file merely to satisfy a numeric migration count.
+11. Do not add no-op Web methods for intrinsically desktop-owned mechanics such as native window minimize/maximize. Translate the user-facing product effect to Web/PWA behavior, or record the mechanism as `not-applicable` with evidence.
 
 ## 4. Requirements
 
@@ -90,13 +96,18 @@ Every one of the 2,111 reference files must have exactly one manifest record wit
 - `source_blob_sha`
 - `source_area`
 - `source_kind`
+- `source_responsibility`
 - `product_relevant`
-- `target_path`
+- `web_effect`
+- `platform_delta`
+- `target_path` (nullable for a justified `not-applicable` source mechanism)
+- `related_target_paths`
 - `target_language`
 - `runtime_owner`
 - `transport_boundary`
 - `status`
 - `behavior_contract`
+- `replacement_behavior`
 - `tests`
 - `evidence`
 - `notes`
@@ -109,7 +120,15 @@ Allowed implementation lifecycle statuses may include `planned`, `implementing`,
 
 `not-applicable` requires a Web-platform reason and evidence. It cannot be used as a shortcut for difficult work.
 
-No reference code file may disappear from accounting because a parent directory was marked complete.
+Status semantics are strict:
+
+- `implemented`: a real Fabushi Web production path owns the mapped responsibility and has appropriate verification.
+- `equivalent`: an already-existing Fabushi Web production path demonstrably owns the same responsibility and Web-visible effect, with evidence.
+- `not-applicable`: the **source implementation mechanism**, not a still-required product capability, is intrinsically inapplicable to the Web platform. If the user-facing effect remains meaningful on Web, `replacement_behavior` is mandatory.
+
+A source record does **not** require a unique one-to-one target file. Multiple Grok files may legitimately converge into one Web module, and one Grok file may legitimately fan out across multiple Web modules, when the ledger records the ownership and behavior mapping.
+
+No reference code file may disappear from accounting because a parent directory was marked complete. Conversely, manifest completeness must never be confused with requiring an equal number of target files.
 
 ### R3 — Grok-shaped target architecture
 
@@ -156,7 +175,7 @@ The default mapping is:
 | `source/internal/**` | `source/internal/**` | Internal runtime support |
 | tests/scripts/config | equivalent Web build/test/release paths | Deterministic verification and delivery |
 
-The manifest may choose a different target path for an individual module only when the record explains why that path is a better Web ownership boundary.
+The table above is a responsibility/ownership mapping, not a filename-copying mandate. The manifest may choose a different target path, multiple target paths, an existing equivalent, or a justified `not-applicable` disposition for an individual source file when the record explains the Web ownership and product effect. Native desktop mechanics such as Electron window chrome are expected to be translated to browser/PWA semantics rather than recreated as non-functional Web APIs.
 
 ### R5 — No parallel legacy production runtime
 
@@ -174,7 +193,7 @@ Official-site/content routes may remain separate product surfaces, but they must
 
 ### R6 — Frontend parity
 
-The Web frontend must migrate Grok renderer responsibilities module by module and preserve equivalent behavior for, at minimum:
+The Web frontend must implement Grok renderer **responsibilities and product effects** domain by domain and preserve equivalent behavior for, at minimum:
 
 - root shell and error boundaries;
 - account and sign-in surfaces;
@@ -200,6 +219,24 @@ The Web frontend must migrate Grok renderer responsibilities module by module an
 - responsive behavior for desktop/tablet/mobile Web.
 
 The final frontend must not require Electron globals, Node built-ins, local filesystem APIs, or desktop-only window controls.
+
+A representative Grok Bot Web turn must behave as a real agent run rather than a simplified chat request:
+
+```text
+Browser composer
+  -> Turn accepted
+  -> preparing/thinking visible
+  -> Host inference
+  -> tool request
+  -> Runner/MCP execution
+  -> ToolStarted / live progress
+  -> ToolCompleted
+  -> continued inference
+  -> TranscriptDelta / streaming answer
+  -> completed
+```
+
+If the browser refreshes or temporarily disconnects during that run, re-authentication and Coordinator resync must restore the **same durable run** and current tool/stream state when the run is still active; the task must not silently disappear merely because the tab reloaded.
 
 ### R7 — Platform runtime abstraction
 
@@ -642,20 +679,28 @@ Where source provenance/licensing is unclear, reproduce architecture/behavior th
 A module is not complete because:
 
 - a target file exists;
-- a placeholder file exists;
+- a one-to-one mirror file was created for a source file;
+- a placeholder/no-op compatibility shim exists;
 - a manifest status changed;
 - a UI component renders;
 - a mocked endpoint returns success;
 - a unit test exists without production wiring.
 
-Each completed record must show:
+For `implemented` / `equivalent` records, completion evidence must show:
 
-1. production target path;
+1. production target path(s);
 2. runtime ownership;
-3. behavior contract;
+3. behavior contract and Web-visible effect;
 4. real implementation;
-5. test coverage appropriate to that module;
+5. test coverage appropriate to that responsibility;
 6. evidence that the production path uses it.
+
+For `not-applicable` records, completion evidence must instead show:
+
+1. the exact source responsibility;
+2. why that implementation mechanism is intrinsically desktop-only or otherwise inapplicable to Web;
+3. the required Web replacement behavior when the user-facing effect still matters;
+4. evidence that no required Grok product capability was silently dropped.
 
 ## 5. Current state
 
@@ -668,11 +713,11 @@ At target baseline `c481dea9e2624a4903fe68e22e22760a47ef7727`:
 - there is no committed 2,111-entry Grok parity manifest;
 - therefore Grok Bot 0.18 Web architecture parity is not complete.
 
-This Spec does not classify existing Fabushi files as obsolete automatically. The per-file migration/architecture plan must determine whether they are retained, migrated, replaced, or removed.
+This Spec does not classify existing Fabushi files as obsolete automatically. The per-file audit/disposition and product-responsibility plan must determine whether they are retained as demonstrated equivalents, migrated, replaced, split/merged into new Web-owned modules, or removed.
 
 ## 6. Target state
 
-The final repository should have one Web production system shaped approximately as:
+The final repository should have one Web production system shaped approximately as below. This tree expresses runtime ownership boundaries; it does **not** require one target file per Grok source file:
 
 ```text
 fabushi-web/
@@ -833,11 +878,12 @@ The implementation plan and tests must explicitly cover all failure cases listed
 
 1. Pin the Grok source commit.
 2. Enumerate all 2,111 reference files with blob SHA.
-3. Classify product relevance.
-4. Assign target path, runtime, language, and initial status.
-5. Add a strict checker that fails if the reference tree and manifest differ.
+3. Identify each source file's responsibility, product relevance, and Web-visible effect.
+4. Classify the platform delta: direct Web implementation, existing equivalent, converged/split Web implementation, or genuinely desktop-only mechanism.
+5. Assign target path(s) or replacement behavior, runtime, language, and initial status.
+6. Add a strict checker that fails if the reference tree and manifest differ.
 
-No broad migration phase should proceed without this manifest.
+The manifest is an exhaustive **audit index**, not a mandate to generate 2,111 target files. No broad migration phase should proceed without this manifest.
 
 ### Phase 1 — Contracts and Web transport
 
@@ -858,11 +904,11 @@ Implement real production wiring and supervision before migrating high-level UI 
 
 ### Phase 3 — Host and Runner boundaries
 
-Port Grok Host modules by domain, with real provider/tool/MCP/runner integration.
+Implement the Web-equivalent Grok Host responsibilities by domain, with real provider/tool/MCP/runner integration, while individually closing the corresponding source-file ledger records.
 
 ### Phase 4 — Frontend module migration
 
-Migrate Grok renderer responsibilities domain by domain into the canonical Fabushi Web app.
+Implement Grok renderer responsibilities and user-visible effects domain by domain in the canonical Fabushi Web app, while individually closing the corresponding source-file ledger records.
 
 Suggested domain order:
 
@@ -912,9 +958,11 @@ Run strict manifest validation requiring:
 
 - exact source tree ↔ manifest equality;
 - no duplicate source entries;
-- every source entry has target/disposition;
+- every source entry has an explicit disposition and responsibility mapping;
 - final statuses only;
-- target path exists for implemented/equivalent code where applicable;
+- target path(s) exist and are production-wired for `implemented`/`equivalent` records;
+- every `not-applicable` record has platform rationale and required replacement behavior/evidence;
+- no rule requires source-file count to equal target-file count;
 - no Electron imports in browser/server production paths;
 - no secret-bearing values in browser bundles.
 
@@ -967,7 +1015,9 @@ Required flows include:
 15. paired local runner where supported;
 16. logout;
 17. multi-tab ownership;
-18. PWA update/reload compatibility.
+18. PWA update/reload compatibility;
+19. a turn that invokes a real tool/Runner and exposes preparing/thinking/tool-running/streaming/completed state transitions;
+20. refresh or temporary disconnect during that tool-running turn, followed by resync to the same durable run rather than task loss or duplicate execution.
 
 ### Browser matrix
 
@@ -1001,9 +1051,9 @@ The implementation and manifest identify exactly Grok commit `a9f633e09d49a85829
 
 All 2,111 pinned reference files are represented exactly once.
 
-### AC-3 — Code parity closure
+### AC-3 — Source-accounting and product-responsibility closure
 
-Every product-relevant Grok code file has a real target implementation or evidenced equivalent. No product-relevant code record ends as `not-applicable` without a Web-platform reason reviewed against the Spec.
+Every Grok source file is audited exactly once, and every product-relevant responsibility represented by the reference has a real Web implementation or evidenced existing equivalent. A one-to-one target-file count is neither required nor accepted as proof of parity. No `not-applicable` record may remove a user-facing/core Agent capability merely because the desktop implementation mechanism cannot run in a browser.
 
 ### AC-4 — Grok-shaped boundaries
 
@@ -1064,6 +1114,10 @@ Exact-HEAD CI passes required unit, contract, integration, browser E2E, security
 ### AC-18 — Spec compliance
 
 Every requirement and acceptance criterion in this document has a final `passed`, `blocked`, or `not-applicable` record with evidence/reason. Completion requires no blocked item unless the user explicitly accepts the blocker and updates scope.
+
+### AC-19 — Grok Bot Web effect
+
+Using Fabushi Web in a normal browser must deliver the same core Grok Bot 0.18 Agent product effect, except for capabilities that are genuinely owned by the desktop OS and cannot safely belong to a browser page. At minimum, exact-HEAD browser acceptance must prove a durable turn can progress through acceptance → preparing/thinking → tool/Runner or MCP execution → live tool state → continued inference → streaming transcript → completion, and that refresh/reconnect during the run resynchronizes the same run without silently losing or duplicating it. Any remaining platform difference must be documented as an explicit Web adaptation rather than an unacknowledged feature reduction.
 
 ## 14. Release / migration / rollback
 
@@ -1133,7 +1187,7 @@ Initial state: this Spec is the implementation gate. Product migration has not b
 | Requirement / AC | Status | Evidence / reason |
 | --- | --- | --- |
 | R1 | passed | Reference repository and exact commit pinned in this Spec. |
-| R2 | pending | 2,111-entry manifest not yet committed. |
+| R2 | pending | 2,111-entry audit manifest not yet committed; it must map responsibilities/effects without requiring 2,111 target files. |
 | R3 | pending | Target runtime boundaries not yet proven. |
 | R4 | pending | Per-file target mapping must be generated. |
 | R5 | pending | Legacy/parallel runtime audit not yet complete. |
@@ -1161,7 +1215,7 @@ Initial state: this Spec is the implementation gate. Product migration has not b
 | R27 | pending | Completion evidence rules apply during implementation. |
 | AC-1 | passed | Exact Grok baseline is fixed. |
 | AC-2 | pending | Manifest missing. |
-| AC-3 | pending | Per-code parity closure not yet performed. |
+| AC-3 | pending | Per-source audit and per-product-responsibility Web parity closure not yet performed. |
 | AC-4 | pending | Runtime boundaries not yet verified. |
 | AC-5 | pending | Electron-free production proof not yet available. |
 | AC-6 | pending | UI/behavior E2E evidence not yet available. |
@@ -1177,5 +1231,6 @@ Initial state: this Spec is the implementation gate. Product migration has not b
 | AC-16 | pending | Strict checker not yet implemented. |
 | AC-17 | pending | Exact-HEAD CI not yet run. |
 | AC-18 | pending | Final compliance review occurs after implementation. |
+| AC-19 | pending | End-to-end Grok Bot Web effect has not yet been proven in exact-HEAD browser acceptance. |
 
 Allowed final compliance statuses are `passed`, `blocked`, and `not-applicable`. The `pending` values above are initial implementation-state markers and must be eliminated before final acceptance.
