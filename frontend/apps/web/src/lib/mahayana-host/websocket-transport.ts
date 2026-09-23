@@ -18,10 +18,10 @@ type ServerEnvelope =
   | { protocolVersion: 1; kind: "reply"; requestId: string; ok: false; error?: { code?: string; message?: string } }
   | { protocolVersion: 1; kind: "event"; seq: number; event: RuntimeEvent };
 function configuredGatewayUrl(): string | null {
-  if (typeof window === "undefined") return null;
   const configured = typeof process !== "undefined" ? process.env.NEXT_PUBLIC_MAHAYANA_GATEWAY_URL?.trim() : undefined;
   if (!configured) return null;
-  try { const url = new URL(configured, window.location.href); if (url.protocol !== "ws:" && url.protocol !== "wss:") return null; return url.toString(); } catch { return null; }
+  const baseUrl = typeof window !== "undefined" ? window.location.href : "http://127.0.0.1/";
+  try { const url = new URL(configured, baseUrl); if (url.protocol !== "ws:" && url.protocol !== "wss:") return null; return url.toString(); } catch { return null; }
 }
 export function isWebSocketMahayanaHostConfigured(): boolean { return configuredGatewayUrl() !== null; }
 function webHttpBase(wsUrl: string): string { const url = new URL(wsUrl); url.protocol = url.protocol === "wss:" ? "https:" : "http:"; url.pathname = "/"; url.search = ""; url.hash = ""; return url.toString().replace(/\/$/, ""); }
