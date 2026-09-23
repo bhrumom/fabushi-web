@@ -64,7 +64,14 @@ test("agent peer, group, and broadcast collaboration use durable Host runs", { t
   const children = [];
   const data = await mkdtemp(path.join(os.tmpdir(), "fabushi-web-collaboration-"));
   t.after(async () => {
-    for (const child of children) child.kill("SIGTERM");
+    await Promise.all(children.map((child) => new Promise((resolve) => {
+      if (child.exitCode !== null || child.signalCode) return resolve();
+      child.once("exit", resolve);
+      child.kill("SIGTERM");
+      setTimeout(() => {
+        if (child.exitCode === null && !child.signalCode) child.kill("SIGKILL");
+      }, 1500).unref();
+    })));
     await rm(data, { recursive: true, force: true });
   });
   const common = { NODE_ENV: "test", FABUSHI_INTERNAL_TOKEN: "collaboration-token" };
