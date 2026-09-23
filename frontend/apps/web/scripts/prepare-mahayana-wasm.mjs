@@ -2,6 +2,12 @@ import { cp, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+const configuredGateway = process.env.NEXT_PUBLIC_MAHAYANA_GATEWAY_URL?.trim();
+if (configuredGateway) {
+  console.log(`External Mahayana gateway configured (${configuredGateway}); embedded WASM preparation is not required.`);
+  process.exit(0);
+}
+
 const appDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(appDir, "../../../../");
 const sourceDir = path.join(repoRoot, "fabushi/web/mahayana-wasm");

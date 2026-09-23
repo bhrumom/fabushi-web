@@ -49,3 +49,5 @@ jobs:
       - run: pnpm install --no-frozen-lockfile
       - run: pnpm --filter @fabushi/web run typecheck:host
       - run: pnpm --filter @fabushi/web run build
+        env:
+          NEXT_PUBLIC_MAHAYANA_GATEWAY_URL: ws://127.0.0.1:8787/v1/coordinator
