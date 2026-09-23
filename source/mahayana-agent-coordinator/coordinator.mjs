@@ -85,6 +85,7 @@ export class MahayanaCoordinatorService {
     this.internalToken = internalToken;
     this.store = new AtomicJsonStore(path.join(dataDir, 'state.json'), initialState);
     this.executing = new Set();
+    this.abortControllers = new Map();
   }
   async initialize() {
     await this.store.update((draft) => { migrateConversationOwnership(draft); draft.peerMessagesByOwner ??= {}; });
@@ -341,11 +342,13 @@ export class MahayanaCoordinatorService {
   async #executeRun(runId) {
     if (this.executing.has(runId)) return;
     this.executing.add(runId);
+    const controller = new AbortController();
+    this.abortControllers.set(runId, controller);
     try {
       const snapshot = await this.store.read();
       const run = snapshot.runs[runId];
       if (!run || TERMINAL_RUN_STATES.has(run.state) || run.cancelled) return;
-      const response = await fetch(`${this.hostUrl}/v1/turn`, { method: 'POST', headers: { 'content-type': 'application/json', ...(this.internalToken ? { authorization: `Bearer ${this.internalToken}` } : {}) }, body: JSON.stringify({ runId: run.runId, executionKey: run.executionKey, ownerId: run.ownerId, conversationId: run.conversationId, agentId: run.agentId, text: run.text, model: run.model }) });
+      const response = await fetch(`${this.hostUrl}/v1/turn`, { method: 'POST', headers: { 'content-type': 'application/json', ...(this.internalToken ? { authorization: `Bearer ${this.internalToken}` } : {}) }, body: JSON.stringify({ runId: run.runId, executionKey: run.executionKey, ownerId: run.ownerId, conversationId: run.conversationId, agentId: run.agentId, text: run.text, model: run.model }), signal: controller.signal });
       if (!response.ok || !response.body) throw new ProtocolError('HOST_UNAVAILABLE', `Host returned HTTP ${response.status}`);
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -390,7 +393,10 @@ export class MahayanaCoordinatorService {
         }
       });
       if (groupFailure) await this.#emitGroupFailure(groupFailure.ownerId, groupFailure.groupId, groupFailure.memberId);
-    } finally { this.executing.delete(runId); }
+    } finally {
+      if (this.abortControllers.get(runId) === controller) this.abortControllers.delete(runId);
+      this.executing.delete(runId);
+    }
   }
   async #acceptHostEvent(runId, hostIndex, event) {
     let groupMessage = null;
@@ -497,6 +503,19 @@ export class MahayanaCoordinatorService {
           error: String(event.message || 'Agent background run failed'),
         });
         if (background.groupId) groupFailure = { ownerId: run.ownerId, groupId: background.groupId, memberId: run.agentId };
+        return;
+      }
+
+      if (event.type === 'operation.interrupted') {
+        this.#appendEvent(state, run.ownerId, run.runId, run.conversationId, {
+          type: 'agent.backgroundFinished',
+          timestamp: event.timestamp || nowIso(),
+          agentId: run.agentId,
+          agentName: background.agentName,
+          operationId: run.runId,
+          source: background.source,
+          error: 'cancelled',
+        });
         return;
       }
 
@@ -631,31 +650,47 @@ export class MahayanaCoordinatorService {
   }
 
   async interrupt(ownerId, runId) {
-    let found = false;
+    const snapshot = await this.store.read();
+    const run = snapshot.runs[runId];
+    if (!run || run.ownerId !== ownerId) throw new ProtocolError('NOT_FOUND', 'Run not found');
+    if (TERMINAL_RUN_STATES.has(run.state)) return { operationId: runId, state: run.state };
+
+    const response = await fetch(`${this.hostUrl}/v1/turn/cancel`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(this.internalToken ? { authorization: `Bearer ${this.internalToken}` } : {}) },
+      body: JSON.stringify({ runId, executionKey: run.executionKey }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok || body?.ok !== true) {
+      const failure = body?.error || {};
+      throw new ProtocolError(failure.code || 'HOST_CANCEL_FAILED', failure.message || `Host cancellation failed with HTTP ${response.status}`, failure.details);
+    }
+    const hostState = body?.result?.state;
+    if (hostState !== 'cancelled') return { operationId: runId, state: hostState || run.state };
+
+    this.abortControllers.get(runId)?.abort();
     await this.store.update((state) => {
-      const run = state.runs[runId];
-      if (!run || run.ownerId !== ownerId) return;
-      found = true;
-      if (TERMINAL_RUN_STATES.has(run.state)) return;
-      run.cancelled = true;
-      run.state = 'cancelled';
-      run.updatedAt = nowIso();
-      run.completedAt = nowIso();
-      if (run.background) {
-        this.#appendEvent(state, ownerId, runId, run.conversationId, {
+      const target = state.runs[runId];
+      if (!target || target.ownerId !== ownerId || TERMINAL_RUN_STATES.has(target.state)) return;
+      target.cancelled = true;
+      target.state = 'cancelled';
+      target.updatedAt = nowIso();
+      target.completedAt = nowIso();
+      if (target.background) {
+        this.#appendEvent(state, ownerId, runId, target.conversationId, {
           type: 'agent.backgroundFinished',
           timestamp: nowIso(),
-          agentId: run.agentId,
-          agentName: run.background.agentName,
+          agentId: target.agentId,
+          agentName: target.background.agentName,
           operationId: runId,
-          source: run.background.source,
+          source: target.background.source,
           error: 'cancelled',
         });
       } else {
-        this.#appendEvent(state, ownerId, runId, run.conversationId, { type: 'operation.interrupted', operationId: runId, timestamp: nowIso() });
+        this.#appendEvent(state, ownerId, runId, target.conversationId, { type: 'operation.interrupted', operationId: runId, timestamp: nowIso() });
       }
     });
-    if (!found) throw new ProtocolError('NOT_FOUND', 'Run not found');
     return { operationId: runId, state: 'cancelled' };
   }
   async getRun(ownerId, runId) {
