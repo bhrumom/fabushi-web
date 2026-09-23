@@ -97,6 +97,7 @@ export class MahayanaCoordinatorService {
         if (!target || TERMINAL_RUN_STATES.has(target.state)) return;
         target.state = 'recovering';
         target.updatedAt = nowIso();
+        target.currentStep = { stepId: 'recovering', kind: 'recovering', title: 'Recovering durable run', status: 'running' };
         this.#appendEvent(draft, target.ownerId, target.runId, target.conversationId, { type: 'agent.step', operationId: target.runId, stepId: 'recovering', kind: 'recovering', title: 'Recovering durable run', status: 'running', timestamp: nowIso() });
       });
       void this.#executeRun(run.runId);
@@ -408,7 +409,24 @@ export class MahayanaCoordinatorService {
       run.hostEventIndex = hostIndex;
       run.state = eventRunState(event, run.state);
       run.updatedAt = nowIso();
-      if (run.state === 'completed' || run.state === 'failed') run.completedAt = nowIso();
+      if (event.type === 'agent.step') {
+        if (event.status === 'running') {
+          run.currentStep = {
+            stepId: String(event.stepId || event.kind || 'active'),
+            kind: String(event.kind || 'active'),
+            title: String(event.title || 'Running'),
+            ...(event.detail !== undefined ? { detail: String(event.detail) } : {}),
+            status: 'running',
+          };
+        } else if (run.currentStep?.stepId === event.stepId) {
+          delete run.currentStep;
+        }
+      }
+      if (TERMINAL_RUN_STATES.has(run.state)) {
+        run.completedAt = nowIso();
+        delete run.currentStep;
+      }
+      if (event.type === 'operation.interrupted') run.cancelled = true;
       if (event.type === 'operation.failed') run.error = { code: event.code, message: event.message };
       if (event.type === 'chat.message') {
         const conversation = ownerConversations(state, run.ownerId, true)[run.conversationId];
@@ -677,6 +695,7 @@ export class MahayanaCoordinatorService {
       target.state = 'cancelled';
       target.updatedAt = nowIso();
       target.completedAt = nowIso();
+      delete target.currentStep;
       if (target.background) {
         this.#appendEvent(state, ownerId, runId, target.conversationId, {
           type: 'agent.backgroundFinished',
