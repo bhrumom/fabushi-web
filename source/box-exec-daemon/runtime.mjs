@@ -16,6 +16,10 @@ export class SafeRunner {
     const args = asRecord(body.args) ?? {};
     const existing = await this.results.read();
     if (existing.results[idempotencyKey]) return existing.results[idempotencyKey];
+    const testDelayMs = Number(process.env.FABUSHI_RUNNER_TEST_DELAY_MS || 0);
+    if (testDelayMs > 0 && process.env.NODE_ENV !== 'production') {
+      await new Promise((resolve) => setTimeout(resolve, testDelayMs));
+    }
     const result = await this.#runTool(tool, args);
     const record = { idempotencyKey, tool, ok: true, result, completedAt: nowIso() };
     await this.results.update((state) => { state.results[idempotencyKey] ??= record; return state.results[idempotencyKey]; });
