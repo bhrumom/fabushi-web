@@ -51,6 +51,7 @@ jobs:
       - run: pnpm --filter @fabushi/web run build
         env:
           NEXT_PUBLIC_MAHAYANA_GATEWAY_URL: ws://127.0.0.1:8787/v1/coordinator
+          NEXT_PUBLIC_FABUSHI_BUILD_ID: ${{ github.sha }}
 
   browser-e2e:
     runs-on: ubuntu-latest
@@ -77,6 +78,7 @@ jobs:
         run: pnpm --filter @fabushi/web run build
         env:
           NEXT_PUBLIC_MAHAYANA_GATEWAY_URL: ws://127.0.0.1:18993/v1/coordinator
+          NEXT_PUBLIC_FABUSHI_BUILD_ID: ${{ github.sha }}
       - name: Run real Chromium durable reload acceptance
         run: node --test tests/browser/*.test.mjs
         env:
