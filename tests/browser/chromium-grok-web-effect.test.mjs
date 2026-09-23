@@ -292,7 +292,7 @@ test("real Chromium reload restores the same durable tool-running run and comple
     return step?.getAttribute('data-operation-id') || '';
   })()`, { timeoutMs: 10_000, label: "same tool-running operation restored after reload" });
   assert.equal(restoredOperationId, operationId);
-  assert.equal(await evaluate(cdp, "document.querySelector('button[aria-label="停止任务"]') !== null"), true);
+  assert.equal(await evaluate(cdp, `document.querySelector('button[aria-label="停止任务"]') !== null`), true);
   await screenshot(cdp, "02-same-run-restored-after-reload.png");
 
   await waitExpression(cdp, `document.querySelector('[data-testid=messages]')?.textContent?.includes(${JSON.stringify(`Completed durable run ${operationId}`)}) === true`, {
