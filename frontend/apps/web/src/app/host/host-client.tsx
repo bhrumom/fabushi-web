@@ -1768,7 +1768,12 @@ export default function HostClient({ onAuthStateChange }: HostClientProps) {
           pass("capability.approval");
           break;
         case "operation.started": {
-          if (claimStreamedOperation(event.operationId)) {
+          if (event.restored) {
+            agentRequestPendingRef.current = false;
+            streamedOperationIdRef.current = event.operationId;
+            setChatDispatching(true);
+            appendThinkingEntry(event.operationId, event.label || "正在恢复任务");
+          } else if (claimStreamedOperation(event.operationId)) {
             setChatDispatching(true);
             appendThinkingEntry(event.operationId, event.label || "正在思考");
           }
