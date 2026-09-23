@@ -30,10 +30,6 @@ import type {
   UpdateState,
   WorkflowSummary,
 } from "./contracts";
-import {
-  ElectronMahayanaHostTransport,
-  isElectronMahayanaHostAvailable,
-} from "./electron-transport";
 import type {
   InstalledPluginList,
   InstalledPluginPointer,
@@ -510,7 +506,6 @@ const richResultsCards = (): TranscriptCard[] => {
  * the in-memory implementation below.
  */
 export class MockMahayanaHostTransport implements MahayanaHostTransport {
-  private readonly native: MahayanaHostTransport | null;
   private readonly listeners = new Set<RuntimeEventListener>();
   private readonly installedPlugins = new Map<string, InstalledPluginPointer>();
   private readonly approvals = new Set<string>();
@@ -555,10 +550,7 @@ export class MockMahayanaHostTransport implements MahayanaHostTransport {
   };
 
   constructor(options: { authenticated?: boolean } = {}) {
-    this.native = isElectronMahayanaHostAvailable()
-      ? new ElectronMahayanaHostTransport()
-      : null;
-    if (!this.native && options.authenticated) {
+    if (options.authenticated) {
       this.auth = {
         loggedIn: true,
         provider: "test",
@@ -572,13 +564,11 @@ export class MockMahayanaHostTransport implements MahayanaHostTransport {
   }
 
   subscribe(listener: RuntimeEventListener): () => void {
-    if (this.native) return this.native.subscribe(listener);
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
   async initialize(config: HostConfig): Promise<HostInfo> {
-    if (this.native) return this.native.initialize(config);
     if (this.status === "ready") return this.info;
     this.status = "initializing";
     this.status = "ready";
@@ -587,7 +577,6 @@ export class MockMahayanaHostTransport implements MahayanaHostTransport {
   }
 
   async marketplaceBrowse(query?: string): Promise<MarketplaceBrowseResult> {
-    if (this.native) return this.native.marketplaceBrowse(query);
     const term = query?.trim().toLocaleLowerCase() ?? "";
     const plugins = [
       ["global-dharma", "全球法布施", "任务、日志与部署"],
@@ -602,7 +591,6 @@ export class MockMahayanaHostTransport implements MahayanaHostTransport {
   }
 
   async marketplaceRelease(pluginId: string, version: string): Promise<MarketplaceReleaseMetadata> {
-    if (this.native) return this.native.marketplaceRelease(pluginId, version);
     const published = getMarketplaceRelease(pluginId);
     if (!published) throw new Error(`published marketplace release is missing for ${pluginId}`);
     const artifact = {
@@ -653,7 +641,6 @@ export class MockMahayanaHostTransport implements MahayanaHostTransport {
   }
 
   async pluginInstall(release: Record<string, unknown>, platform = "desktop"): Promise<InstalledPluginPointer> {
-    if (this.native) return this.native.pluginInstall(release, platform);
     const pluginId = String(release.pluginId ?? "");
     const version = String(release.version ?? "1.0.0");
     if (!pluginId) throw new Error("release pluginId is required");
@@ -666,33 +653,27 @@ export class MockMahayanaHostTransport implements MahayanaHostTransport {
   }
 
   async pluginUninstall(pluginId: string): Promise<PluginUninstallResult> {
-    if (this.native) return this.native.pluginUninstall(pluginId);
     return { pluginId, removed: this.installedPlugins.delete(pluginId), permissionsRemoved: true };
   }
 
   async pluginRollback(pluginId: string): Promise<InstalledPluginPointer | null> {
-    if (this.native) return this.native.pluginRollback(pluginId);
     return this.installedPlugins.get(pluginId) ?? null;
   }
 
   async pluginActive(pluginId: string): Promise<InstalledPluginPointer | null> {
-    if (this.native) return this.native.pluginActive(pluginId);
     return this.installedPlugins.get(pluginId) ?? null;
   }
 
   async pluginListInstalled(): Promise<InstalledPluginList> {
-    if (this.native) return this.native.pluginListInstalled();
     return { plugins: [...this.installedPlugins.values()] };
   }
 
   async pluginUiDocument(pluginId: string): Promise<PluginUiDocument> {
-    if (this.native) return this.native.pluginUiDocument(pluginId);
     if (!this.installedPlugins.has(pluginId)) throw new Error(`plugin ${pluginId} is not installed`);
     return { pluginId, html: `<!doctype html><meta charset="utf-8"><title>${pluginId}</title><main style="font-family:system-ui;padding:32px"><h1>${pluginId}</h1><p>Installed from the online Mahayana Marketplace.</p></main>` };
   }
 
   async execute(command: RuntimeCommand): Promise<CommandAccepted> {
-    if (this.native) return this.native.execute(command);
     this.assertReady();
 
     switch (command.type) {
@@ -1897,12 +1878,10 @@ export class MockMahayanaHostTransport implements MahayanaHostTransport {
   }
 
   async authStatus(): Promise<AuthState> {
-    if (this.native) return this.native.authStatus();
     return this.auth;
   }
 
   async browserLoginStart(): Promise<BrowserLoginAttempt> {
-    if (this.native) return this.native.browserLoginStart();
     this.assertReady();
     this.browserLoginAttempt = {
       attemptId: `browser-${this.nextId("attempt")}`,
@@ -1914,7 +1893,6 @@ export class MockMahayanaHostTransport implements MahayanaHostTransport {
   }
 
   async browserLoginPoll(attemptId: string): Promise<BrowserLoginPollResult> {
-    if (this.native) return this.native.browserLoginPoll(attemptId);
     if (this.browserLoginAttempt?.attemptId !== attemptId) return { status: "expired" };
     this.auth = {
       loggedIn: true,
@@ -1930,7 +1908,6 @@ export class MockMahayanaHostTransport implements MahayanaHostTransport {
   }
 
   async browserLoginReopen(attemptId: string): Promise<BrowserLoginReopenResult> {
-    if (this.native) return this.native.browserLoginReopen(attemptId);
     if (this.browserLoginAttempt?.attemptId !== attemptId) throw new Error("Browser login attempt expired");
     this.browserLoginAttempt = {
       ...this.browserLoginAttempt,
@@ -1941,14 +1918,12 @@ export class MockMahayanaHostTransport implements MahayanaHostTransport {
   }
 
   async browserLoginCancel(attemptId: string): Promise<BrowserLoginPollResult> {
-    if (this.native) return this.native.browserLoginCancel(attemptId);
     if (this.browserLoginAttempt?.attemptId !== attemptId) return { status: "expired" };
     this.browserLoginAttempt = null;
     return { status: "cancelled" };
   }
 
   async authProviders(): Promise<AuthProvider[]> {
-    if (this.native) return this.native.authProviders();
     return [
       { id: "google", displayName: "Google", enabled: true },
       { id: "apple", displayName: "Apple", enabled: true },
@@ -1958,7 +1933,6 @@ export class MockMahayanaHostTransport implements MahayanaHostTransport {
   }
 
   async oauthStart(provider: AuthProviderId): Promise<OAuthAttempt> {
-    if (this.native) return this.native.oauthStart(provider);
     this.assertReady();
     this.oauthAttempt = {
       attemptId: `oauth-${provider}-${this.nextId("attempt")}`,
@@ -1969,7 +1943,6 @@ export class MockMahayanaHostTransport implements MahayanaHostTransport {
   }
 
   async oauthPoll(attemptId: string): Promise<OAuthPollResult> {
-    if (this.native) return this.native.oauthPoll(attemptId);
     if (this.oauthAttempt?.attemptId !== attemptId) {
       return { status: "expired" };
     }
@@ -1988,7 +1961,6 @@ export class MockMahayanaHostTransport implements MahayanaHostTransport {
   }
 
   async openExternal(url: string): Promise<void> {
-    if (this.native) return this.native.openExternal(url);
     if (
       url.startsWith("about:blank#fabushi-test-oauth") ||
       url.startsWith("about:blank#fabushi-test-connector")
@@ -1998,23 +1970,19 @@ export class MockMahayanaHostTransport implements MahayanaHostTransport {
   }
 
   async openSystemSettings(pane: "screen-recording" | "accessibility"): Promise<void> {
-    if (this.native) return this.native.openSystemSettings(pane);
   }
 
   async windowFocused(): Promise<boolean> {
-    if (this.native) return this.native.windowFocused();
     return typeof document === "undefined" ? true : document.hasFocus();
   }
 
   async showNotification(title: string, body: string): Promise<void> {
-    if (this.native) return this.native.showNotification(title, body);
     if (typeof Notification === "undefined") return;
     if (Notification.permission === "default") await Notification.requestPermission();
     if (Notification.permission === "granted") new Notification(title, { body });
   }
 
   async passwordLogin(username: string, password: string): Promise<AuthState> {
-    if (this.native) return this.native.passwordLogin(username, password);
     this.assertReady();
     if (!username.trim() || !password) throw new Error("请输入账号和密码");
     this.auth = {
@@ -2026,13 +1994,11 @@ export class MockMahayanaHostTransport implements MahayanaHostTransport {
   }
 
   async logout(): Promise<AuthState> {
-    if (this.native) return this.native.logout();
     this.auth = { loggedIn: false, provider: "test" };
     return this.auth;
   }
 
   async interrupt(operationId: string): Promise<void> {
-    if (this.native) return this.native.interrupt(operationId);
     this.assertReady();
     this.emit({
       type: "operation.interrupted",
@@ -2042,7 +2008,6 @@ export class MockMahayanaHostTransport implements MahayanaHostTransport {
   }
 
   async resolveApproval(resolution: ApprovalResolution): Promise<void> {
-    if (this.native) return this.native.resolveApproval(resolution);
     this.assertReady();
     if (!this.approvals.delete(resolution.approvalId)) {
       throw new Error(`Unknown approval: ${resolution.approvalId}`);
@@ -2056,7 +2021,6 @@ export class MockMahayanaHostTransport implements MahayanaHostTransport {
   }
 
   async close(): Promise<void> {
-    if (this.native) return this.native.close();
     if (this.status === "closed") return;
     this.status = "closed";
     this.emit({ type: "host.closed", timestamp: now() });

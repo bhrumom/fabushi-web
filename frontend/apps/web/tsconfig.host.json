@@ -6,7 +6,6 @@
     "noEmit": true
   },
   "include": [
-    "next-env.d.ts",
     "src/app/host/**/*.ts",
     "src/app/host/**/*.tsx",
     "src/lib/mahayana-host/**/*.ts"

@@ -3,10 +3,27 @@ export type JsonSchema = {
   title?: string;
   description?: string;
   default?: unknown;
+  const?: unknown;
   enum?: unknown[];
   properties?: Record<string, JsonSchema>;
   required?: string[];
+  additionalProperties?: boolean | JsonSchema;
   items?: JsonSchema;
+  oneOf?: JsonSchema[];
+  anyOf?: JsonSchema[];
+  allOf?: JsonSchema[];
+  minimum?: number;
+  maximum?: number;
+  exclusiveMinimum?: number;
+  exclusiveMaximum?: number;
+  multipleOf?: number;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+  format?: string;
+  minItems?: number;
+  maxItems?: number;
+  uniqueItems?: boolean;
 };
 
 export type McpTool = {

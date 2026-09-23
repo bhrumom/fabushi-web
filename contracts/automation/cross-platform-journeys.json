@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "features": [
+    {
+      "id": "auth.login",
+      "label": "Authenticated account session",
+      "steps": [
+        {
+          "action": "oauthLogin",
+          "provider": "google"
+        },
+        {
+          "action": "expectReady"
+        }
+      ]
+    },
+    {
+      "id": "runtime.boot",
+      "label": "Mahayana runtime ready",
+      "steps": [
+        {
+          "action": "expectReady"
+        }
+      ]
+    },
+    {
+      "id": "chat.send",
+      "label": "Send and receive agent chat",
+      "steps": [
+        {
+          "action": "sendChat",
+          "text": "Hello Mahayana",
+          "expectedReply": "Hello Mahayana"
+        }
+      ]
+    },
+    {
+      "id": "marketplace.install",
+      "label": "Install official Mini App",
+      "steps": [
+        {
+          "action": "installMiniApp",
+          "miniAppId": "fabushi-official"
+        }
+      ]
+    },
+    {
+      "id": "miniapp.open",
+      "label": "Open installed Mini App",
+      "steps": [
+        {
+          "action": "openMiniApp",
+          "miniAppId": "fabushi-official"
+        }
+      ]
+    },
+    {
+      "id": "capability.approval",
+      "label": "Approve Mini App capability once",
+      "steps": [
+        {
+          "action": "approveCapability",
+          "miniAppId": "fabushi-official",
+          "capability": "network",
+          "decision": "allow-once"
+        }
+      ]
+    },
+    {
+      "id": "operation.interrupt",
+      "label": "Interrupt an active operation",
+      "steps": [
+        {
+          "action": "interruptOperation",
+          "label": "Agent run"
+        }
+      ]
+    },
+    {
+      "id": "session.clear",
+      "label": "Clear active session",
+      "steps": [
+        {
+          "action": "clearSession"
+        }
+      ]
+    }
+  ]
+}
