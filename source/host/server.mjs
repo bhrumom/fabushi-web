@@ -50,6 +50,18 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ ok: true, ...result }));
       return;
     }
+    if (req.method === 'POST' && req.url === '/v1/turn/cancel') {
+      if (!authorized(req)) {
+        res.writeHead(401, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { code: 'UNAUTHORIZED', message: 'Invalid internal token' } }));
+        return;
+      }
+      const input = await readJson(req);
+      const result = await runtime.cancelTurn(input);
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify({ ok: true, result }));
+      return;
+    }
     if (req.method === 'POST' && req.url === '/v1/turn') {
       if (!authorized(req)) {
         res.writeHead(401, { 'content-type': 'application/json' });
