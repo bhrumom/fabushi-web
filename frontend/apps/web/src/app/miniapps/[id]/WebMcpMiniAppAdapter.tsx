@@ -61,7 +61,7 @@ export default function WebMcpMiniAppAdapter({ pluginId }: { pluginId: string })
 
   useEffect(() => {
     let active = true;
-    let dispose = () => undefined;
+    let dispose: () => void = () => undefined;
 
     void (async () => {
       try {
