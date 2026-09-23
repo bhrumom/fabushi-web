@@ -1,0 +1,51 @@
+name: Grok Web Parity
+
+on:
+  pull_request:
+    paths:
+      - 'source/**'
+      - 'frontend/apps/web/**'
+      - 'tests/**'
+      - 'scripts/check-grok-web-parity-manifest.mjs'
+      - 'docs/architecture/grok-bot-0.18-web-parity-*'
+      - 'docs/specs/grok-bot-0.18-web-architecture-parity.md'
+      - '.github/workflows/grok-web-parity.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify exact reference manifest
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/check-grok-web-parity-manifest.mjs --verify-reference
+      - name: Run protocol and durable Web effect tests
+        run: node --test tests/contract/*.test.mjs tests/integration/*.test.mjs
+
+  frontend-contract:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend/apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: frontend/apps/web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck:host
+      - run: pnpm run build

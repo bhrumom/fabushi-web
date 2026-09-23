@@ -8,7 +8,7 @@ export interface HostConfig {
 export interface HostInfo {
   runtimeVersion: string;
   protocolVersion: "1";
-  platform: "mock" | "electron" | "tauri" | "wasm" | "flutter";
+  platform: "mock" | "electron" | "tauri" | "wasm" | "flutter" | "web";
 }
 
 export interface AuthUser {

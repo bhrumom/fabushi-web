@@ -50,6 +50,7 @@ import type {
 import { ElectronMahayanaHostTransport, isElectronMahayanaHostAvailable } from "../../lib/mahayana-host/electron-transport";
 import { MockMahayanaHostTransport } from "../../lib/mahayana-host/mock-transport";
 import { WasmMahayanaHostTransport } from "../../lib/mahayana-host/wasm-transport";
+import { WebSocketMahayanaHostTransport, isWebSocketMahayanaHostConfigured } from "../../lib/mahayana-host/websocket-transport";
 import type { MahayanaHostTransport } from "../../lib/mahayana-host/transport";
 import { MahayanaCoordinator } from "../../lib/mahayana-host/coordinator";
 import {
@@ -424,9 +425,10 @@ export default function HostClient({ onAuthStateChange }: HostClientProps) {
     // browser flow appear successful while the authoritative Host remains signed out.
     if (screenshotMode !== null) return new MockMahayanaHostTransport({ authenticated: true });
     // The standalone Host journey uses deterministic fixtures for auth and
-    // marketplace contract coverage. Production browser sessions always use
-    // Mahayana WebAssembly below, so this branch cannot hide a real runtime.
+    // marketplace contract coverage. Configured production Web sessions use
+    // the durable Web Main -> Coordinator -> Host -> Runner transport first.
     if (hostTestMode) return new MockMahayanaHostTransport({ authenticated: false });
+    if (isWebSocketMahayanaHostConfigured()) return new WebSocketMahayanaHostTransport();
     if (isElectronMahayanaHostAvailable()) return new ElectronMahayanaHostTransport();
     return new WasmMahayanaHostTransport();
   }, [hostTestMode, screenshotMode]);
