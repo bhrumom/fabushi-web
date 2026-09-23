@@ -7,6 +7,7 @@ import { ProtocolError, asRecord, nowIso, requireString } from "../shared/protoc
 import { McpClientPool } from "./mcp-client.mjs";
 import { RemoteComputerService } from "./remote-computer-service.mjs";
 import { AttachmentService } from "./attachment-service.mjs";
+import { StatefulProductService } from "./stateful-product-service.mjs";
 
 const MAX_ARTIFACT_BYTES = 32 * 1024 * 1024;
 const MAX_UI_BYTES = 2 * 1024 * 1024;
@@ -172,6 +173,7 @@ export class HostProductService {
     this.mcp = new McpClientPool();
     this.remoteComputer = new RemoteComputerService({ dataDir, platformApiBase });
     this.attachments = new AttachmentService({ dataDir });
+    this.stateful = new StatefulProductService({ dataDir });
     this.platformApiBase = platformApiBase.replace(/\/$/, "");
   }
 
@@ -193,6 +195,14 @@ export class HostProductService {
 
   async runtimeCommand(ownerId, command) {
     if (command.type.startsWith("attachment.") || command.type === "search.media") return await this.attachments.runtimeCommand(ownerId, command);
+    if (
+      command.type.startsWith("settings.") ||
+      command.type.startsWith("bot.") ||
+      command.type.startsWith("group.") ||
+      command.type.startsWith("memory.") ||
+      command.type.startsWith("tray.") ||
+      ["skill.list", "skill.upsert", "skill.delete"].includes(command.type)
+    ) return await this.stateful.runtimeCommand(ownerId, command);
     const ownerState = await this.#ownerState(ownerId);
     switch (command.type) {
       case "mcp.list": {

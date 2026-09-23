@@ -108,17 +108,37 @@ export class MahayanaCoordinatorService {
       case 'chat.send': return await this.#acceptTurn(ownerId, command);
       case 'conversation.list': return await this.#emitConversationList(ownerId, command);
       case 'conversation.open': return await this.#emitConversationOpen(ownerId, command);
-      case 'bot.list': return await this.#emit(ownerId, command, { type: 'bot.listed', bots: [{ id: DEFAULT_AGENT_ID, name: 'Mahayana', description: 'Durable Fabushi Web agent', title: 'Mahayana', hidden: false, notificationsEnabled: true, notifyOnUpdates: true, unread: false, conversationId: DEFAULT_CONVERSATION_ID }] });
       case 'capability.list': return await this.#emit(ownerId, command, { type: 'capability.listed', capabilities: [{ id: DEFAULT_AGENT_ID, title: 'Mahayana', kind: 'agent', mention: '@mahayana', conversationId: DEFAULT_CONVERSATION_ID, provider: 'mahayana-web', description: 'Durable Web Agent', requiredPermissions: [], availability: 'ready' }] });
       case 'automation.list': return await this.#emit(ownerId, command, { type: 'automation.listed', automations: [] });
-      case 'group.list': return await this.#emit(ownerId, command, { type: 'group.listed', groups: [] });
-      case 'skill.list': return await this.#emit(ownerId, command, { type: 'skill.listed', skills: [], teams: [] });
       case 'connector.list': return await this.#emit(ownerId, command, { type: 'connector.listed', connectors: [] });
       case 'listener.list': return await this.#emit(ownerId, command, { type: 'listener.listed', integrations: [] });
       case 'subagent.list': return await this.#emit(ownerId, command, { type: 'subagent.listed', agentId: command.agentId, subagents: [] });
       case 'asyncTask.list': return await this.#emit(ownerId, command, { type: 'asyncTask.listed', agentId: command.agentId, tasks: [] });
       case 'capability.request': return await this.#requestCapabilityApproval(ownerId, command);
       case 'search.messages': return await this.#searchMessages(ownerId, command);
+      case 'bot.list':
+      case 'bot.create':
+      case 'bot.update':
+      case 'bot.clone':
+      case 'bot.delete':
+      case 'bot.setHidden':
+      case 'group.list':
+      case 'group.create':
+      case 'group.update':
+      case 'group.delete':
+      case 'skill.list':
+      case 'skill.upsert':
+      case 'skill.delete':
+      case 'memory.list':
+      case 'memory.add':
+      case 'memory.remove':
+      case 'memory.clear':
+      case 'tray.list':
+      case 'tray.dismiss':
+      case 'tray.clear':
+      case 'tray.clearForAgent':
+      case 'settings.get':
+      case 'settings.update':
       case 'mcp.list':
       case 'mcp.apps':
       case 'mcp.oauthLogin':
