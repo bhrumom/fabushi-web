@@ -1,11 +1,13 @@
 import http from 'node:http';
 import { HostRuntime } from './host-service.mjs';
+import { HostProductService } from './product-service.mjs';
 import { errorEnvelope } from '../shared/protocol.mjs';
 
 const host = process.env.FABUSHI_HOST_BIND || '127.0.0.1';
 const port = Number(process.env.FABUSHI_HOST_PORT || 8789);
 const internalToken = process.env.FABUSHI_INTERNAL_TOKEN || '';
 const runtime = new HostRuntime();
+const products = new HostProductService();
 
 async function readJson(req, maxBytes = 2 * 1024 * 1024) {
   let size = 0;
@@ -26,6 +28,26 @@ const server = http.createServer(async (req, res) => {
     if (req.url === '/healthz') {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ ok: true, service: 'fabushi-host' }));
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/v1/product') {
+      if (!authorized(req)) {
+        res.writeHead(401, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { code: 'UNAUTHORIZED', message: 'Invalid internal token' } }));
+        return;
+      }
+      const input = await readJson(req);
+      const ownerId = String(input.ownerId || '').trim();
+      if (!ownerId) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { code: 'OWNER_REQUIRED', message: 'ownerId is required' } }));
+        return;
+      }
+      const result = input.command
+        ? { events: await products.runtimeCommand(ownerId, input.command) }
+        : { result: await products.invoke(ownerId, String(input.method || ''), input.args || {}) };
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify({ ok: true, ...result }));
       return;
     }
     if (req.method === 'POST' && req.url === '/v1/turn') {

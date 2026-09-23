@@ -1,11 +1,12 @@
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { AtomicJsonStore } from '../shared/atomic-json-store.mjs';
 import { ProtocolError, TERMINAL_RUN_STATES, errorEnvelope, makeRun, nowIso, publicRun, requireString, validateRuntimeCommand } from '../shared/protocol.mjs';
 
 const DEFAULT_AGENT_ID = 'assistant';
 const DEFAULT_CONVERSATION_ID = 'mahayana-ai:agent:assistant';
 function initialState() {
-  return { version: 1, nextSeq: 1, runs: {}, requestIndex: {}, events: [], conversations: { [DEFAULT_CONVERSATION_ID]: { id: DEFAULT_CONVERSATION_ID, title: 'Mahayana（大乘 AI）', kind: 'agent', pinned: true, updatedAtMs: Date.now(), messages: [] } } };
+  return { version: 1, nextSeq: 1, runs: {}, requestIndex: {}, approvals: {}, events: [], conversations: { [DEFAULT_CONVERSATION_ID]: { id: DEFAULT_CONVERSATION_ID, title: 'Mahayana（大乘 AI）', kind: 'agent', pinned: true, updatedAtMs: Date.now(), messages: [] } } };
 }
 function eventRunState(event, current) {
   if (event.type === 'operation.completed') return 'completed';
@@ -48,6 +49,8 @@ export class MahayanaCoordinatorService {
       case 'runtime.interrupt': return await this.interrupt(owner, requireString(args.operationId, 'operationId', { max: 128 }));
       case 'runtime.resync': return await this.resync(owner, Number(args.afterSeq || 0));
       case 'runtime.run': return await this.getRun(owner, requireString(args.runId, 'runId', { max: 128 }));
+      case 'runtime.approval': return await this.resolveApproval(owner, args);
+      case 'product.request': return await this.productRequest(owner, requireString(args.method, 'product.method', { max: 160 }), args.args || {});
       default: throw new ProtocolError('METHOD_NOT_FOUND', `Coordinator method is not supported: ${method}`);
     }
   }
@@ -65,6 +68,19 @@ export class MahayanaCoordinatorService {
       case 'listener.list': return await this.#emit(ownerId, command, { type: 'listener.listed', integrations: [] });
       case 'subagent.list': return await this.#emit(ownerId, command, { type: 'subagent.listed', agentId: command.agentId, subagents: [] });
       case 'asyncTask.list': return await this.#emit(ownerId, command, { type: 'asyncTask.listed', agentId: command.agentId, tasks: [] });
+      case 'capability.request': return await this.#requestCapabilityApproval(ownerId, command);
+      case 'mcp.list':
+      case 'mcp.apps':
+      case 'mcp.oauthLogin':
+      case 'mcp.oauthLogout':
+      case 'mcp.remove':
+      case 'mcp.setCustomInstructions':
+      case 'mcp.setToolDisabled':
+      case 'mcp.refresh':
+      case 'mcp.toolCall':
+      case 'marketplace.install':
+      case 'miniapp.open':
+        return await this.#executeProductCommand(ownerId, command);
       case 'session.clear': return await this.#emit(ownerId, command, { type: 'session.cleared' });
       default: throw new ProtocolError('COMMAND_NOT_IMPLEMENTED', `Runtime command is not implemented by Web Coordinator yet: ${command.type}`);
     }
@@ -151,6 +167,107 @@ export class MahayanaCoordinatorService {
       this.#appendEvent(state, run.ownerId, run.runId, run.conversationId, event);
     });
   }
+  async productRequest(ownerId, method, args = {}) {
+    const response = await fetch(`${this.hostUrl}/v1/product`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(this.internalToken ? { authorization: `Bearer ${this.internalToken}` } : {}),
+      },
+      body: JSON.stringify({ ownerId, method, args }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok || body?.ok !== true) {
+      const error = body?.error || {};
+      throw new ProtocolError(error.code || 'HOST_PRODUCT_FAILED', error.message || `Host product request failed with HTTP ${response.status}`, error.details);
+    }
+    return body.result;
+  }
+
+  async #executeProductCommand(ownerId, command) {
+    const response = await fetch(`${this.hostUrl}/v1/product`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(this.internalToken ? { authorization: `Bearer ${this.internalToken}` } : {}),
+      },
+      body: JSON.stringify({ ownerId, command }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok || body?.ok !== true || !Array.isArray(body.events)) {
+      const error = body?.error || {};
+      throw new ProtocolError(error.code || 'HOST_PRODUCT_FAILED', error.message || `Host product command failed with HTTP ${response.status}`, error.details);
+    }
+    await this.store.update((state) => {
+      for (const event of body.events) {
+        if (!event || typeof event !== 'object' || Array.isArray(event) || typeof event.type !== 'string') continue;
+        this.#appendEvent(state, ownerId, null, DEFAULT_CONVERSATION_ID, event);
+      }
+    });
+    return { requestId: command.requestId };
+  }
+
+  async #requestCapabilityApproval(ownerId, command) {
+    const approvalId = randomUUID();
+    await this.store.update((state) => {
+      state.approvals ??= {};
+      state.approvals[approvalId] = {
+        approvalId,
+        ownerId,
+        miniAppId: requireString(command.miniAppId, 'miniAppId', { max: 256 }),
+        capability: requireString(command.capability, 'capability', { max: 256 }),
+        reason: requireString(command.reason, 'reason', { max: 4096 }),
+        status: 'pending',
+        createdAt: nowIso(),
+        resolvedAt: null,
+        decision: null,
+      };
+      this.#appendEvent(state, ownerId, null, DEFAULT_CONVERSATION_ID, {
+        type: 'approval.requested',
+        timestamp: nowIso(),
+        approvalId,
+        miniAppId: command.miniAppId,
+        capability: command.capability,
+        reason: command.reason,
+        kind: 'capability',
+        location: 'cloud',
+      });
+    });
+    return { requestId: command.requestId };
+  }
+
+  async resolveApproval(ownerId, input) {
+    const approvalId = requireString(input?.approvalId, 'approvalId', { max: 128 });
+    const decision = requireString(input?.decision, 'decision', { max: 32 });
+    if (!['allow-once', 'allow-session', 'deny'].includes(decision)) {
+      throw new ProtocolError('INVALID_ARGUMENT', `Unsupported approval decision: ${decision}`);
+    }
+    let resolved = false;
+    await this.store.update((state) => {
+      state.approvals ??= {};
+      const approval = state.approvals[approvalId];
+      if (!approval || approval.ownerId !== ownerId) return;
+      if (approval.status !== 'pending') {
+        if (approval.decision === decision) { resolved = true; return; }
+        throw new ProtocolError('APPROVAL_ALREADY_RESOLVED', 'Approval was already resolved with a different decision');
+      }
+      approval.status = 'resolved';
+      approval.decision = decision;
+      approval.resolvedAt = nowIso();
+      resolved = true;
+      this.#appendEvent(state, ownerId, null, DEFAULT_CONVERSATION_ID, {
+        type: 'approval.resolved',
+        timestamp: nowIso(),
+        approvalId,
+        decision,
+      });
+    });
+    if (!resolved) throw new ProtocolError('APPROVAL_NOT_FOUND', 'Approval not found');
+    return { approvalId, decision };
+  }
+
   async interrupt(ownerId, runId) {
     let found = false;
     await this.store.update((state) => {

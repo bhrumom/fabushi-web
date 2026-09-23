@@ -92,7 +92,9 @@ server.on('upgrade', (req, socket, head) => { void (async () => {
         if (envelope.method === 'auth.status') result = { loggedIn: true, provider: 'web-session', user: { id: session.sub } };
         else if (envelope.method === 'auth.providers') result = [];
         else if (envelope.method.startsWith('runtime.')) result = await coordinatorRequest(session.sub, envelope.method, envelope.args || {});
-        else throw new ProtocolError('METHOD_NOT_FOUND', `Web Main method is not implemented: ${envelope.method}`);
+        else if (envelope.method.startsWith('marketplace.') || envelope.method.startsWith('plugin.')) {
+          result = await coordinatorRequest(session.sub, 'product.request', { method: envelope.method, args: envelope.args || {} });
+        } else throw new ProtocolError('METHOD_NOT_FOUND', `Web Main method is not implemented: ${envelope.method}`);
         ws.sendJson(makeReply(envelope.requestId, result));
       } catch (error) { ws.sendJson(makeFailureReply(envelope.requestId, error)); }
     });
