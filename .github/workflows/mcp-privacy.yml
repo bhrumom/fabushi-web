@@ -1,0 +1,25 @@
+name: MCP privacy policy verification
+on:
+  push:
+    branches: ['work/mcp-privacy-*', main]
+    paths: ['site/mcp-privacy/**', 'frontend/apps/web/src/app/privacy/page.tsx', '.github/workflows/mcp-privacy.yml']
+  pull_request:
+    paths: ['site/mcp-privacy/**', 'frontend/apps/web/src/app/privacy/page.tsx', '.github/workflows/mcp-privacy.yml']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Check policy delivery bundle
+        working-directory: site/mcp-privacy
+        run: npx --yes wrangler@4.110.0 deploy --dry-run --outdir bundle
+      - name: Retain verified policy bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-privacy-${{ github.sha }}
+          path: site/mcp-privacy/bundle

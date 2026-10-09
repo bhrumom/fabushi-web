@@ -1,0 +1,9 @@
+name = "fabushi-mcp-privacy"
+main = "worker.js"
+compatibility_date = "2026-10-09"
+workers_dev = false
+routes = [{ pattern = "ombhrum.com/mcp-privacy*", zone_name = "ombhrum.com" }]
+[[rules]]
+type = "Text"
+globs = ["**/*.html"]
+fallthrough = true
