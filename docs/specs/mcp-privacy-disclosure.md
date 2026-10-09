@@ -26,3 +26,5 @@ AC-P3: OAuth branding points to that usable policy; Google review remains explic
 ## Provenance and compliance
 Desktop docs/specs/fabushi-official-mcp-marketplace.md, Core mcp_oauth.rs and native OAuth/vault implementation, user continuation authorization.
 P1-P4 and AC-P1..3 pending; record final evidence before completion.
+
+Delivery design: dedicated canonical Web Worker serves only /mcp-privacy and /mcp-privacy/. Its more-specific route preserves the current site Worker, bindings and assets. Actions bundles the exact policy source; Mac Cloudflare control deploys only that verified Worker via API, with route preservation and public response checks.
