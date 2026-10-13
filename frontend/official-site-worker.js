@@ -36,6 +36,11 @@ export default {
       return redirectToOfficialSite(url);
     }
 
+    if (url.protocol !== "https:") {
+      url.protocol = "https:";
+      return Response.redirect(url.toString(), 308);
+    }
+
     const androidDownload = ANDROID_R2_DOWNLOADS.get(url.pathname);
     const appMatch = url.pathname.match(APP_PROXY_ROUTE);
     const dachengAiMatch = url.pathname.match(DACHENG_AI_PROXY_ROUTE);
@@ -61,7 +66,7 @@ export default {
       return serveWebApplication(request, env, url);
     }
 
-    return env.ASSETS.fetch(request);
+    return serveStaticAsset(request, env, url);
   },
 };
 
@@ -83,10 +88,32 @@ function serveWebApplication(request, env, url) {
 
   if (url.pathname === "/" || url.pathname === "/index.html") {
     const assetUrl = new URL(url.toString());
-    assetUrl.pathname = "/web/";
+    assetUrl.pathname = "/web/index.html";
     return env.ASSETS.fetch(new Request(assetUrl.toString(), request));
   }
 
+  return serveStaticAsset(request, env, url);
+}
+
+// html_handling="none" lets the Worker own URL normalization. Explicit index
+// assets prevent the ASSETS binding from redirecting an internal Web rewrite.
+function serveStaticAsset(request, env, url) {
+  if (url.pathname.endsWith("/index.html")) {
+    const canonical = new URL(url.toString());
+    canonical.pathname = canonical.pathname.slice(0, -"index.html".length);
+    return Response.redirect(canonical.toString(), 308);
+  }
+  const lastSegment = url.pathname.split("/").pop();
+  if (lastSegment && !lastSegment.includes(".")) {
+    const canonical = new URL(url.toString());
+    canonical.pathname += "/";
+    return Response.redirect(canonical.toString(), 308);
+  }
+  if (url.pathname.endsWith("/")) {
+    const assetUrl = new URL(url.toString());
+    assetUrl.pathname += "index.html";
+    return env.ASSETS.fetch(new Request(assetUrl.toString(), request));
+  }
   return env.ASSETS.fetch(request);
 }
 
