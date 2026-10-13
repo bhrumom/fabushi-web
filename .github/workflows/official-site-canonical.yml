@@ -1,0 +1,60 @@
+name: Official site canonical verification
+on:
+  push:
+    branches: [main, 'work/search-console-*']
+    paths:
+      - 'frontend/official-site-worker.js'
+      - 'frontend/wrangler.official-site.toml'
+      - 'frontend/apps/web/src/app/app/page.tsx'
+      - 'frontend/apps/web/scripts/check-site-host-split.mjs'
+      - 'scripts/audit-official-site-seo.py'
+      - '.github/workflows/official-site-canonical.yml'
+  pull_request:
+    paths:
+      - 'frontend/official-site-worker.js'
+      - 'frontend/wrangler.official-site.toml'
+      - 'frontend/apps/web/src/app/app/page.tsx'
+      - 'frontend/apps/web/scripts/check-site-host-split.mjs'
+      - 'scripts/audit-official-site-seo.py'
+      - '.github/workflows/official-site-canonical.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  routing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Verify host routing and URL aliases
+        run: node --experimental-default-type=module frontend/apps/web/scripts/check-site-host-split.mjs
+      - name: Verify assets configuration
+        run: |
+          python - <<'PY'
+          import tomllib
+          from pathlib import Path
+          config = tomllib.loads(Path("frontend/wrangler.official-site.toml").read_text())
+          assert config["name"] == "fabushi-official-site"
+          assert config["assets"]["binding"] == "ASSETS"
+          assert config["assets"]["run_worker_first"] is True
+          assert config["assets"]["html_handling"] == "none"
+          assert config["assets"]["not_found_handling"] == "404-page"
+          assert {r["pattern"] for r in config["routes"]} == {"ombhrum.com/*", "fabushi.ombhrum.com", "web.ombhrum.com"}
+          print("Canonical deployment config verified.")
+          PY
+  public-http-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Collect live HTTP canonical and crawl metadata
+        run: python scripts/audit-official-site-seo.py
+      - name: Retain public audit evidence even when production is unhealthy
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-site-seo-${{ github.sha }}
+          path: evidence/seo
+          if-no-files-found: error
