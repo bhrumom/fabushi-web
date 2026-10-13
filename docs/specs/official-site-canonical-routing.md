@@ -73,7 +73,7 @@ Email notification verified. Search Console browser is signed out. Blocker email
 ## 17. Spec compliance record
 | Requirement / AC | Status | Evidence / reason |
 | --- | --- | --- |
-| R1–R6 / AC-1–2 | pending | Implementation and exact-head Actions pending |
+| R1–R6 / AC-1–2 | passed | Source checks on 1de3af6f: Actions 38447008709 routing success; public HTTP audit/artifact collected (live defects remain). See evidence/2026-10-14-search-console-canonical.md. |
 | R7 / AC-4 | blocked | Search Console session/report data unavailable |
 | R8 | passed | Canonical repository only; no local build/test |
 | AC-3 | blocked | Canonical export lacks complete build/deploy dependencies |
