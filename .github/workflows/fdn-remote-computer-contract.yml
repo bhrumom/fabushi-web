@@ -39,7 +39,7 @@ jobs:
       - name: Typecheck Remote Computer owner
         working-directory: frontend/apps/web
         run: >-
-          npx --yes typescript@5.9.3 tsc --noEmit --target ES2022
+          npx --yes --package typescript@5.9.3 tsc --noEmit --target ES2022
           --module preserve --moduleResolution bundler --lib ES2022,DOM
           --skipLibCheck src/lib/remote-computer/remote-api.ts
       - name: Reject credential leakage in changed owner
