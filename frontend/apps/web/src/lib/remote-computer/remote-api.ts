@@ -5,6 +5,7 @@ const SESSION_KEY = "fabushi-remote-auth-v1";
 const MOBILE_DEVICE_KEY = "fabushi-remote-mobile-device-v1";
 const LEGACY_PAIRED_CLIENTS_KEY = "fabushi-remote-paired-clients-v1";
 const PAIRED_CLIENTS_KEY_PREFIX = "fabushi-remote-paired-clients-v2";
+const CONTROL_SESSION_REQUEST_KEY_PREFIX = "fabushi-remote-control-session-request-v1";
 
 export interface RemoteAuthSession {
   accessToken: string;
@@ -200,6 +201,49 @@ function accountStorageScope(userId: string | number): string {
 
 function pairedClientsStorageKey(userId: string | number): string {
   return `${PAIRED_CLIENTS_KEY_PREFIX}:${accountStorageScope(userId)}`;
+}
+
+function controlSessionRequestStorageKey(
+  userId: string | number,
+  deviceId: string,
+  clientId: string,
+): string {
+  return `${CONTROL_SESSION_REQUEST_KEY_PREFIX}:${accountStorageScope(userId)}:${deviceId}:${clientId}`;
+}
+
+function stableControlSessionRequestId(
+  userId: string | number,
+  deviceId: string,
+  clientId: string,
+): string {
+  const storage = browserStorage();
+  if (!storage) throw new Error("当前浏览器无法保存远程控制会话请求身份");
+  const key = controlSessionRequestStorageKey(userId, deviceId, clientId);
+  try {
+    const existing = storage.getItem(key)?.trim() ?? "";
+    if (validStoredIdentifier(existing, 160)) return existing;
+    const requestId = newId("mobile-request");
+    if (!validStoredIdentifier(requestId, 160)) throw new Error("invalid request identity");
+    storage.setItem(key, requestId);
+    if (storage.getItem(key) !== requestId) throw new Error("request identity persistence mismatch");
+    return requestId;
+  } catch {
+    throw new Error("无法安全保存远程控制会话请求身份");
+  }
+}
+
+function clearControlSessionRequestId(
+  userId: string | number,
+  deviceId: string,
+  clientId: string,
+  requestId: string,
+): void {
+  const storage = browserStorage();
+  if (!storage) return;
+  const key = controlSessionRequestStorageKey(userId, deviceId, clientId);
+  try {
+    if (storage.getItem(key) === requestId) storage.removeItem(key);
+  } catch { /* keep the request identity fail-closed on storage errors */ }
 }
 
 function normalizeAuthSession(value: unknown): RemoteAuthSession | null {
@@ -493,9 +537,12 @@ export class RemoteComputerApi {
       || !validOpaqueCredential(clientToken)) {
       throw new Error("本手机的配对凭据无效，请重新配对");
     }
+    const userId = this.session?.userId;
+    if (userId === undefined || userId === null) throw new Error("请先登录大乘账号");
+    const requestId = stableControlSessionRequestId(userId, deviceId, clientId);
     const response = await this.authorizedFetch(`/v1/computers/${encodeURIComponent(deviceId)}/sessions`, {
       method: "POST",
-      body: JSON.stringify({ clientId, clientToken }),
+      body: JSON.stringify({ clientId, clientToken, requestId }),
     });
     const raw = await parseResponse<unknown>(response);
     if (!isRecord(raw)
@@ -510,6 +557,10 @@ export class RemoteComputerApi {
       || !normalizeRemoteControlPermissions(raw.permissions)) {
       throw new Error("远程控制会话响应与已配对设备不匹配");
     }
+    if (!this.session || accountIdentity(this.session.userId) !== accountIdentity(userId)) {
+      throw new Error("登录账号已变化，请在当前账号下重新创建远程控制会话");
+    }
+    clearControlSessionRequestId(userId, deviceId, clientId, requestId);
     return {
       sessionId: raw.sessionId,
       deviceId,

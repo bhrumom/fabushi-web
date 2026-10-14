@@ -1,0 +1,51 @@
+name: FDN Remote Computer platform contract
+
+on:
+  pull_request:
+    paths:
+      - 'frontend/apps/web/src/lib/remote-computer/**'
+      - 'frontend/apps/web/scripts/check-fdn-remote-computer-contract.cjs'
+      - 'docs/specs/fdn-001-remote-computer-platform-contract.md'
+      - '.github/workflows/fdn-remote-computer-contract.yml'
+  push:
+    branches:
+      - main
+      - 'fdn-001-*'
+    paths:
+      - 'frontend/apps/web/src/lib/remote-computer/**'
+      - 'frontend/apps/web/scripts/check-fdn-remote-computer-contract.cjs'
+      - 'docs/specs/fdn-001-remote-computer-platform-contract.md'
+      - '.github/workflows/fdn-remote-computer-contract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  web-remote-computer-contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Bind exact tested HEAD
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Verify FDN G13 Web contract
+        working-directory: frontend/apps/web
+        run: node scripts/check-fdn-remote-computer-contract.cjs
+      - name: Typecheck Remote Computer owner
+        working-directory: frontend/apps/web
+        run: >-
+          npx --yes --package typescript@5.9.3 tsc --noEmit --target ES2022
+          --module preserve --moduleResolution bundler --lib ES2022,DOM
+          --skipLibCheck src/lib/remote-computer/remote-api.ts
+      - name: Reject credential leakage in changed owner
+        working-directory: frontend/apps/web
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -En 'console\.(log|info|warn|error)\([^\n]*(clientToken|mobileToken|accessToken|refreshToken)' src/lib/remote-computer/remote-api.ts
+          ! grep -En '(clientToken|mobileToken|accessToken|refreshToken)=' src/lib/remote-computer/remote-api.ts
