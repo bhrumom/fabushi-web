@@ -36,6 +36,12 @@ jobs:
       - name: Verify FDN G13 Web contract
         working-directory: frontend/apps/web
         run: node scripts/check-fdn-remote-computer-contract.cjs
+      - name: Typecheck Remote Computer owner
+        working-directory: frontend/apps/web
+        run: >-
+          npx --yes typescript@5.9.3 tsc --noEmit --target ES2022
+          --module preserve --moduleResolution bundler --lib ES2022,DOM
+          --skipLibCheck src/lib/remote-computer/remote-api.ts
       - name: Reject credential leakage in changed owner
         working-directory: frontend/apps/web
         shell: bash
