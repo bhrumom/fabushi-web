@@ -1,0 +1,105 @@
+name: Grok Web Parity
+
+on:
+  pull_request:
+    paths:
+      - 'source/**'
+      - 'frontend/apps/web/**'
+      - 'tests/**'
+      - 'scripts/check-grok-web-parity-manifest.mjs'
+      - 'docs/architecture/grok-bot-0.18-web-parity-*'
+      - 'docs/specs/grok-bot-0.18-web-architecture-parity.md'
+      - '.github/workflows/grok-web-parity.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify exact reference manifest
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/check-grok-web-parity-manifest.mjs --verify-reference
+      - name: Run protocol and durable Web effect tests
+        run: node --test tests/contract/*.test.mjs tests/integration/*.test.mjs
+
+  frontend-contract:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: frontend/apps/web/pnpm-lock.yaml
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm --filter @fabushi/web run typecheck:host
+      - run: pnpm --filter @fabushi/web run build
+        env:
+          NEXT_PUBLIC_MAHAYANA_GATEWAY_URL: ws://127.0.0.1:8787/v1/coordinator
+          NEXT_PUBLIC_FABUSHI_BUILD_ID: ${{ github.sha }}
+
+  browser-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: frontend/apps/web/pnpm-lock.yaml
+      - id: chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --no-frozen-lockfile
+      - name: Build production Web app for durable-browser acceptance
+        working-directory: frontend
+        run: pnpm --filter @fabushi/web run build
+        env:
+          NEXT_PUBLIC_MAHAYANA_GATEWAY_URL: ws://127.0.0.1:18993/v1/coordinator
+          NEXT_PUBLIC_FABUSHI_BUILD_ID: ${{ github.sha }}
+      - name: Run real Chromium durable reload acceptance
+        run: node --test tests/browser/*.test.mjs
+        env:
+          CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
+      - name: Upload Chromium acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: grok-web-chromium-evidence-${{ github.sha }}
+          path: artifacts/grok-web-chromium
+          if-no-files-found: warn
+
+  security-static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Enforce Web production security boundaries
+        run: node scripts/check-grok-web-security.mjs
+      - name: Run production auth/origin/session security tests
+        run: node --test tests/security/*.test.mjs
+

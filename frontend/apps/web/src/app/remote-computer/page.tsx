@@ -57,7 +57,7 @@ function pointDistance(a: ComputerPoint, b: ComputerPoint): number {
 
 export default function RemoteComputerPage() {
   const api = useMemo(() => new RemoteComputerApi(), []);
-  const [auth, setAuth] = useState<RemoteAuthSession | null>(() => api.currentSession());
+  const [auth, setAuth] = useState<RemoteAuthSession | null>(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
@@ -67,7 +67,7 @@ export default function RemoteComputerPage() {
   const [deviceQuery, setDeviceQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<DeviceStatusFilter>("all");
   const [capabilityFilter, setCapabilityFilter] = useState<DeviceCapabilityFilter>("all");
-  const [paired, setPaired] = useState<Record<string, PairedClientRecord>>(() => api.pairedClients());
+  const [paired, setPaired] = useState<Record<string, PairedClientRecord>>({});
   const [selectedDeviceId, setSelectedDeviceId] = useState("");
   const [peerState, setPeerState] = useState<MobilePeerState>({ phase: "idle" });
   const [frame, setFrame] = useState<RemoteFrame | null>(null);
@@ -102,15 +102,22 @@ export default function RemoteComputerPage() {
   const connected = peerState.phase === "connected";
 
   const refreshComputers = async () => {
-    const next = await api.listComputers();
+    const [next, records] = await Promise.all([api.listComputers(), api.pairedClients()]);
     setComputers(next);
-    const records = api.pairedClients();
     setPaired(records);
     setSelectedDeviceId((current) => {
       if (current && next.some((computer) => computer.deviceId === current)) return current;
       return next.find((computer) => records[computer.deviceId])?.deviceId ?? "";
     });
   };
+
+  useEffect(() => {
+    let active = true;
+    void api.authStatus()
+      .then((session) => { if (active) setAuth(session); })
+      .catch((cause) => { if (active) setError(cause instanceof Error ? cause.message : String(cause)); });
+    return () => { active = false; };
+  }, [api]);
 
   useEffect(() => {
     if (!auth) return;
@@ -161,7 +168,7 @@ export default function RemoteComputerPage() {
     try {
       const result = await api.pair(pairingCode, phoneLabel);
       setPairingCode("");
-      setPaired(api.pairedClients());
+      setPaired(await api.pairedClients());
       setSelectedDeviceId(result.deviceId);
       await refreshComputers();
     } catch (cause) {
@@ -193,7 +200,6 @@ export default function RemoteComputerPage() {
       api,
       deviceId,
       clientId: record.clientId,
-      clientToken: record.clientToken,
       onState: (state) => { if (isCurrent()) setPeerState(state); },
       onFrame: (nextFrame) => { if (isCurrent()) setFrame(nextFrame); },
       onError: (message) => { if (isCurrent()) setError(message); },
@@ -227,7 +233,7 @@ export default function RemoteComputerPage() {
 
   const logout = async () => {
     await disconnect();
-    api.logout();
+    await api.logout();
     setAuth(null);
     setComputers([]);
     setPaired({});

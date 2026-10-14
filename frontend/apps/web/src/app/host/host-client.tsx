@@ -47,9 +47,8 @@ import type {
   WorkflowSummary,
   WorkflowTrigger,
 } from "../../lib/mahayana-host/contracts";
-import { ElectronMahayanaHostTransport, isElectronMahayanaHostAvailable } from "../../lib/mahayana-host/electron-transport";
 import { MockMahayanaHostTransport } from "../../lib/mahayana-host/mock-transport";
-import { WasmMahayanaHostTransport } from "../../lib/mahayana-host/wasm-transport";
+import { WebSocketMahayanaHostTransport, isWebSocketMahayanaHostConfigured } from "../../lib/mahayana-host/websocket-transport";
 import type { MahayanaHostTransport } from "../../lib/mahayana-host/transport";
 import { MahayanaCoordinator } from "../../lib/mahayana-host/coordinator";
 import {
@@ -424,11 +423,11 @@ export default function HostClient({ onAuthStateChange }: HostClientProps) {
     // browser flow appear successful while the authoritative Host remains signed out.
     if (screenshotMode !== null) return new MockMahayanaHostTransport({ authenticated: true });
     // The standalone Host journey uses deterministic fixtures for auth and
-    // marketplace contract coverage. Production browser sessions always use
-    // Mahayana WebAssembly below, so this branch cannot hide a real runtime.
+    // marketplace contract coverage. Configured production Web sessions use
+    // the durable Web Main -> Coordinator -> Host -> Runner transport first.
     if (hostTestMode) return new MockMahayanaHostTransport({ authenticated: false });
-    if (isElectronMahayanaHostAvailable()) return new ElectronMahayanaHostTransport();
-    return new WasmMahayanaHostTransport();
+    if (isWebSocketMahayanaHostConfigured()) return new WebSocketMahayanaHostTransport();
+    throw new Error("Fabushi Web requires NEXT_PUBLIC_MAHAYANA_GATEWAY_URL; native/WASM runtime fallbacks are not allowed in the Web product.");
   }, [hostTestMode, screenshotMode]);
   const coordinator = useMemo(() => new MahayanaCoordinator(transport), [transport]);
   const requestSequence = useRef(0);
@@ -1766,7 +1765,12 @@ export default function HostClient({ onAuthStateChange }: HostClientProps) {
           pass("capability.approval");
           break;
         case "operation.started": {
-          if (claimStreamedOperation(event.operationId)) {
+          if (event.restored) {
+            agentRequestPendingRef.current = false;
+            streamedOperationIdRef.current = event.operationId;
+            setChatDispatching(true);
+            appendThinkingEntry(event.operationId, event.label || "正在恢复任务");
+          } else if (claimStreamedOperation(event.operationId)) {
             setChatDispatching(true);
             appendThinkingEntry(event.operationId, event.label || "正在思考");
           }
@@ -3671,6 +3675,13 @@ export default function HostClient({ onAuthStateChange }: HostClientProps) {
                     onResolveDraft={resolveDraft}
                     onProvideSecret={provideSecret}
                     onConnectListener={connectListener}
+                    onOpenMiniApp={(card) => {
+                      setOpenedMiniApp(card.miniAppId);
+                      setOpenedMiniAppHtml(card.html);
+                      setActiveAgentId(card.miniAppId);
+                      setMarketplaceOpen(false);
+                      setComputerOpen(true);
+                    }}
                   />
                 ))}
               </div>

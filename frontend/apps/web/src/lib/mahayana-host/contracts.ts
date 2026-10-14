@@ -8,7 +8,7 @@ export interface HostConfig {
 export interface HostInfo {
   runtimeVersion: string;
   protocolVersion: "1";
-  platform: "mock" | "electron" | "tauri" | "wasm" | "flutter";
+  platform: "mock" | "electron" | "tauri" | "wasm" | "flutter" | "web";
 }
 
 export interface AuthUser {
@@ -1088,6 +1088,7 @@ export type RuntimeEvent =
       operationId: string;
       label: string;
       interruptible: boolean;
+      restored?: boolean;
     })
   | (EventBase & { type: "operation.interrupted"; operationId: string })
   | (EventBase & { type: "operation.completed"; operationId: string })

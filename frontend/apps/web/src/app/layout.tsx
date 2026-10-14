@@ -4,6 +4,7 @@ import { brand } from "@fabushi/shared";
 import { LocaleProvider } from "../components/locale-provider";
 import { FabushiAppAgentSurface } from "../components/fabushi-app-agent-surface";
 import { MarketplaceWebMcp } from "../components/marketplace/marketplace-webmcp";
+import { PwaRuntime } from "../components/pwa-runtime";
 import { siteUrl } from "../lib/site-url";
 import "./globals.css";
 
@@ -81,6 +82,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         />
       </head>
       <body>
+        <PwaRuntime />
         <MarketplaceWebMcp />
         <FabushiAppAgentSurface />
         <LocaleProvider>{children}</LocaleProvider>

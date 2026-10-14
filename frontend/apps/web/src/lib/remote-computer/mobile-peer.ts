@@ -33,7 +33,6 @@ export interface MobileRemoteComputerPeerOptions {
   api: RemoteComputerApi;
   deviceId: string;
   clientId: string;
-  clientToken: string;
   onState?: (state: MobilePeerState) => void;
   onFrame?: (frame: RemoteFrame) => void;
   onError?: (message: string) => void;
@@ -73,7 +72,6 @@ export class MobileRemoteComputerPeer {
   private readonly api: RemoteComputerApi;
   private readonly deviceId: string;
   private readonly clientId: string;
-  private readonly clientToken: string;
   private readonly onState?: MobileRemoteComputerPeerOptions["onState"];
   private readonly onFrame?: MobileRemoteComputerPeerOptions["onFrame"];
   private readonly onError?: MobileRemoteComputerPeerOptions["onError"];
@@ -97,7 +95,6 @@ export class MobileRemoteComputerPeer {
     this.api = options.api;
     this.deviceId = options.deviceId;
     this.clientId = options.clientId;
-    this.clientToken = options.clientToken;
     this.onState = options.onState;
     this.onFrame = options.onFrame;
     this.onError = options.onError;
@@ -127,7 +124,7 @@ export class MobileRemoteComputerPeer {
     this.pendingAiRequests.clear();
     this.update({ phase: "connecting", error: undefined });
     try {
-      const session = await this.api.createControlSession(this.deviceId, this.clientId, this.clientToken);
+      const session = await this.api.createControlSession(this.deviceId, this.clientId);
       this.session = session;
       const peer = new RTCPeerConnection({ iceServers: session.iceServers });
       this.peer = peer;
